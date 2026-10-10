@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tangent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&family=Inclusive+Sans:ital@0;1&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;0,7..72,700;1,7..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<link rel="stylesheet" href="/styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.6/purify.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+</head>
+<body>
+<header class="bar">
+  <button class="wordmark" id="home" title="Load something else">Tangent<span class="dot">¶</span></button>
+  <div class="bar-spacer"></div>
+  <nav class="tools" aria-label="Reading tools">
+    <button class="tool" id="tBrief" aria-pressed="false" title="Before you read (b)"><span class="k">b</span><span class="label-long">Before you read</span><span class="label-short">Brief</span></button>
+    <button class="tool" id="tCascade" aria-pressed="false" title="Spine: core of each sentence in full ink, details softer (s)"><span class="k">s</span>Spine</button>
+    <button class="tool" id="tFocus" aria-pressed="false" title="Focus mode (f)"><span class="k">f</span>Focus</button>
+    <button class="tool" id="tProfile" aria-haspopup="true" title="Reading profile">Aa</button>
+  </nav>
+  <div class="progress" aria-hidden="true"><i id="progressFill"></i></div>
+</header>
+
+<div class="profile-panel" id="profilePanel" hidden>
+  <div class="pp-title">Reading profile</div>
+  <div class="profiles" role="radiogroup">
+    <button data-profile="editorial" role="radio"><b>Editorial</b><span>Serif, warm paper</span></button>
+    <button data-profile="clear" role="radio"><b>Clear</b><span>Dyslexia-friendly spacing, hyperlegible type</span></button>
+    <button data-profile="lamp" role="radio"><b>Lamp</b><span>Dark, low glare</span></button>
+  </div>
+  <div class="pp-row"><span>Text size</span>
+    <div class="stepper"><button id="sizeDown" aria-label="Smaller">–</button><output id="sizeOut">100%</output><button id="sizeUp" aria-label="Larger">+</button></div>
+  </div>
+  <label class="pp-row"><span>Reading ruler</span><input type="checkbox" id="ruler"></label>
+  <div class="pp-foot" id="modelInfo"></div>
+</div>
+
+<main id="landing" class="landing">
+  <h1>Read anything.<br><em>Ask in the margin.</em></h1>
+  <form id="urlForm" class="url-form">
+    <input id="urlInput" type="text" placeholder="Paste a link, or ask about anything" autocomplete="off" required aria-describedby="intent">
+    <button type="submit" id="goBtn">Read</button>
+  </form>
+  <div class="intent-row">
+    <span class="intent" id="intent" aria-live="polite"></span>
+    <div class="compose-opts" id="composeOpts" hidden>
+      <div class="seg" role="radiogroup" aria-label="Length" data-opt="length">
+        <button data-v="primer" aria-pressed="true">Primer · 3 min</button>
+        <button data-v="deep" aria-pressed="false">Deep dive · 8 min</button>
+      </div>
+      <div class="seg" role="radiogroup" aria-label="Reading level" data-opt="level">
+        <button data-v="plain" aria-pressed="false">Plain</button>
+        <button data-v="standard" aria-pressed="true">Standard</button>
+        <button data-v="expert" aria-pressed="false">Expert</button>
+      </div>
+    </div>
+  </div>
+  <div class="landing-alt">
+    <button id="sampleBtn" class="linkish">Try a sample text</button>
+    <span>·</span>
+    <button id="pasteBtn" class="linkish">Paste text instead</button>
+  </div>
+  <form id="pasteForm" class="paste-form" hidden>
+    <textarea id="pasteText" rows="8" placeholder="Paste text here. Blank lines separate paragraphs."></textarea>
+    <button type="submit">Read this</button>
+  </form>
+  <p class="landing-err" id="landingErr" role="alert"></p>
+  <ul class="landing-hints">
+    <li><kbd>select</kbd> any words, then just start typing to ask</li>
+    <li>hold <kbd>V</kbd> and ask out loud</li>
+    <li><kbd>s</kbd> spine · <kbd>f</kbd> focus · <kbd>j</kbd>/<kbd>k</kbd> move</li>
+  </ul>
+</main>
+
+<main id="reader" class="reader" hidden>
+  <nav class="crumbs" id="crumbs" aria-label="Readings you came from" hidden></nav>
+  <div class="page">
+    <header class="doc-head" id="docHead"></header>
+    <section class="brief" id="brief" hidden></section>
+    <article id="article" class="article"></article>
+    <section class="endmatter" id="endmatter" hidden></section>
+    <aside id="margin" class="margin" aria-label="Margin notes">
+      <p class="margin-hint" id="marginHint">This margin is for notes. Select a passage and start typing to ask, hold <kbd>V</kbd> to ask out loud, or click a paragraph number. Answers are written here, beside the words they explain.</p>
+    </aside>
+  </div>
+</main>
+
+<div class="selbar" id="selbar" hidden role="toolbar" aria-label="Ask about selection">
+  <div class="selbar-actions">
+    <button data-act="ask">Ask</button>
+    <button data-act="explain">Explain</button>
+    <button data-act="define">Define</button>
+    <button data-act="simplify" title="Plain-words version of this paragraph">Simplify ¶</button>
+    <button data-act="mic" class="mic" aria-label="Hold to ask out loud" title="Hold to talk (or hold V)"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-2.1a7 7 0 0 0 6-6.9h-2Z"/></svg></button>
+  </div>
+  <form class="selbar-ask" hidden>
+    <input placeholder="Ask about this…" autocomplete="off">
+  </form>
+</div>
+
+<div class="askbar" id="askbar" hidden>
+  <form id="askForm">
+    <input id="askInput" placeholder="Ask about the whole text" autocomplete="off">
+    <kbd class="hint">⌥A</kbd>
+  </form>
+  <div class="modes" role="radiogroup" aria-label="Answer mode">
+    <button data-mode="quick" aria-pressed="true">Quick</button>
+    <button data-mode="deep" aria-pressed="false">Deep</button>
+  </div>
+  <button class="mic big" id="askMic" aria-label="Hold to ask out loud"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-2.1a7 7 0 0 0 6-6.9h-2Z"/></svg></button>
+</div>
+
+<div class="listening" id="listening" hidden aria-live="polite">
+  <div class="wave"><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="heard" id="heard">Listening…</div>
+  <div class="about" id="listenAbout"></div>
+</div>
+
+<div class="ruler" id="rulerBand" hidden></div>
+<div class="toast" id="toast" role="status"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mozilla/readability@0.5.0/Readability.js"></script>
+<script src="/extract.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

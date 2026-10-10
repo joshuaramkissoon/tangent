@@ -1,0 +1,10 @@
+https://darioamodei.com/essay/machines-of-loving-grace
+https://en.wikipedia.org/wiki/Quantum_entanglement
+https://arxiv.org/abs/1706.03762
+https://bitcoin.org/bitcoin.pdf
+https://github.com/mozilla/readability
+https://peps.python.org/pep-0703/
+https://paulgraham.com/greatwork.html
+https://simonwillison.net/2024/Dec/31/llms-in-2024/
+https://doc.rust-lang.org/book/ch16-01-threads.html
+https://www.coursera.org/learn/modern-cpp-concurrency

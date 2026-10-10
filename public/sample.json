@@ -1,0 +1,15 @@
+{
+  "title": "Why your phone battery quietly gets worse",
+  "byline": "Sample text",
+  "paragraphs": [
+    "Every lithium-ion battery begins dying on the day it is made, and the reason has less to do with how often you charge it than with a thin, crusty film that forms inside it during its very first cycles.",
+    "That film is called the solid electrolyte interphase, or SEI, and it grows on the surface of the graphite anode when a small amount of electrolyte reacts with lithium and turns into a solid layer that lithium ions can pass through but electrons cannot.",
+    "In moderation the SEI is a blessing, because once it has formed it stops the electrolyte from continuing to react, which is why manufacturers deliberately run new cells through a slow formation cycle before they ever leave the factory.",
+    "The trouble is that the layer never fully stops growing, and every lithium atom it swallows is one that can no longer carry charge, so the capacity you lose in year two is mostly lithium that has been locked away in a slowly thickening crust.",
+    "Heat accelerates this process dramatically, roughly doubling the rate of the side reactions for every ten degrees Celsius, which is why a phone left on a sunny dashboard can age more in an afternoon than it would in a month on a desk.",
+    "Fast charging adds a second problem known as lithium plating, in which ions arrive at the anode faster than they can slip between the graphite layers and instead pile up on the surface as metallic lithium, some of which never comes back.",
+    "Engineers describe charging speed with the C-rate, where 1C means filling the battery in an hour and 2C means filling it in half an hour, and plating becomes far more likely at high C-rates when the cell is cold or already nearly full.",
+    "This is why modern phones charge quickly up to about eighty percent and then slow to a trickle, and why features that learn your alarm time and finish charging just before you wake up are not marketing gimmicks but genuine chemistry.",
+    "The practical advice that follows is less dramatic than most people expect: avoid heat, avoid sitting at one hundred percent for long periods, and stop worrying about the number of cycles, because a battery kept cool and half full can outlive the phone it powers."
+  ]
+}

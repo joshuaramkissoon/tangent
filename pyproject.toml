@@ -1,0 +1,17 @@
+[project]
+name = "tangent"
+version = "0.1.0"
+description = "Read anything, ask in the margin, and follow rabbit holes without losing your place."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic",
+    "fastapi",
+    "httpx",
+    "openai",
+    "pymupdf4llm",
+    "python-multipart",
+    "trafilatura",
+    "uvicorn",
+]
