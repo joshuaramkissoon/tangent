@@ -372,12 +372,27 @@ def store(title, byline, paragraphs, source=None, blocks=None):
             "blocks": blocks}
 
 
+FOOTNOTE_DEF = re.compile(r"^\[\^([\w-]{1,12})\]:[ \t]*(.*(?:\n(?:[ \t]+.*|[ \t]*(?=\n[ \t]+\S)))*)", re.M)
+
+
 def store_md(title, byline, md, source=None):
+    # "[^1]: note" definitions become sidenotes; the [^1] markers in the text open them.
+    footnotes = {m.group(1): norm(m.group(2)) for m in FOOTNOTE_DEF.finditer(md)}
+    if footnotes:
+        md = FOOTNOTE_DEF.sub("", md)
+        # Named notes ([^jupiter]) are numbered in reading order, like a printed page.
+        order = list(dict.fromkeys(k for k in re.findall(r"\[\^([\w-]{1,12})\]", md) if k in footnotes))
+        order += [k for k in footnotes if k not in order]
+        number = {k: str(i + 1) for i, k in enumerate(order)}
+        md = re.sub(r"\[\^([\w-]{1,12})\]", lambda m: f"[^{number[m.group(1)]}]" if m.group(1) in number else m.group(0), md)
+        footnotes = {number[k]: footnotes[k] for k in order}
     blocks = md_to_blocks(md)
     # Drop a leading block that just repeats the title.
     if blocks and norm(plain(blocks[0]["md"])).lower() == norm(title).lower():
         blocks = blocks[1:]
-    return store(title, byline, paragraphs_of(blocks), source, blocks)
+    doc = store(title, byline, paragraphs_of(blocks), source, blocks)
+    doc["footnotes"] = footnotes
+    return doc
 
 
 @app.get("/api/extract", dependencies=[limit("fetch")])

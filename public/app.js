@@ -292,6 +292,14 @@ function renderEndmatter() {
 
 state.trail = [];
 
+// A rabbit hole: a short composed reading on a phrase or question, with a breadcrumb back here.
+function goDeeper(topic) {
+  if (!topic?.trim() || !state.doc) return;
+  const question = `${topic.trim()} (context: "${state.doc.title}")`;
+  pushTrail();
+  compose(question, { length: "primer", level: state.settings.profile === "clear" ? "plain" : "standard" });
+}
+
 function pushTrail() {
   if (!state.doc) return;
   state.trail.push({ doc: state.doc, notes: state.notes, cascades: new Map(state.cascades), scaffold: state.scaffold, y: scrollY });
@@ -599,6 +607,7 @@ function createNote({ kind, para, selection = "", question = "", range = null })
     <div class="note-scroll at-top at-bottom"><div class="note-body"></div></div>
     <div class="note-foot">
       <span class="meta"></span><span class="spacer"></span>
+      <button class="deeper" title="Write a short reading on this; breadcrumbs bring you back"><span class="spark">✦</span> Go deeper</button>
       <button class="copy" title="Copy the latest answer">Copy</button>
     </div>
     <form class="followup">
@@ -619,6 +628,7 @@ function createNote({ kind, para, selection = "", question = "", range = null })
     if (expand) state.notes.forEach(n => n !== note && setCollapsed(n, true));
     setCollapsed(note, !expand);
   });
+  $(".deeper", el).addEventListener("click", () => goDeeper(note.selection || note.question || paraText(note.para).slice(0, 200)));
   $(".copy", el).addEventListener("click", () => {
     const last = [...note.turns].reverse().find(t => t.a && !t.error);
     if (last) { navigator.clipboard?.writeText(last.a.trim()); toast("Copied"); }
@@ -1003,6 +1013,7 @@ selbar.addEventListener("click", e => {
   const pend = state.pending;
   if (!act || !pend || act === "mic") return;
   if (act === "ask") return openSelAsk("");
+  if (act === "deeper") { const t = pend.text; getSelection().removeAllRanges(); hideSelbar(); return goDeeper(t); }
   if ((act === "explain" || act === "define") && !pend.text) return openSelAsk("");
   createNote({ kind: act, para: pend.para, selection: act === "simplify" ? "" : pend.text, range: act === "simplify" ? null : pend.range });
   getSelection().removeAllRanges();

@@ -686,3 +686,7 @@ button.crumb:hover i { color: var(--rubric); }
   background: color-mix(in srgb, var(--paper) 82%, transparent); backdrop-filter: blur(2px); }
 .dropzone span { padding: 1.4rem 2.4rem; border: 2px dashed var(--rubric); border-radius: 18px; color: var(--rubric);
   font-family: var(--serif, inherit); font-size: 1.4rem; background: var(--paper); }
+
+/* Rabbit holes: start a composed reading from a note or a selection */
+.note-foot .deeper, .selbar .deeper { color: var(--rubric); }
+.note-foot .deeper .spark { font-size: .8em; }
