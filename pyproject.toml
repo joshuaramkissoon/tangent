@@ -10,7 +10,7 @@ dependencies = [
     "fastapi",
     "httpx",
     "openai",
-    "pymupdf4llm",
+    "pymupdf4llm>=0.3.4,<1",  # 1.x adds a 300 MB layout model (onnxruntime, numpy), too big for serverless
     "python-multipart",
     "trafilatura",
     "uvicorn",

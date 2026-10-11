@@ -422,6 +422,19 @@ UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit
       "Accept": "text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8"}
 
 
+def drop_figure_labels(md: str) -> str:
+    """Text inside diagrams comes out as stray fragments ("Hash", "Owner 1's Private Key"). Past the
+    title block, drop short lines that aren't sentences, headings, lists, code or tables."""
+    chunks = re.split(r"\n\s*\n", md)
+
+    def label(c: str) -> bool:
+        c = c.strip()
+        if not c or len(c) >= 50 or re.search(r"^(#|[-*+] |\d+[.)] |```|\||\$)", c):
+            return False
+        return c.endswith("...") or not re.search(r"[.!?:;)\]]$", c)
+    return "\n\n".join(c for k, c in enumerate(chunks) if k < 4 or not label(c))
+
+
 def pdf_to_doc(data: bytes, url: str) -> dict:
     import pymupdf
     import pymupdf4llm
@@ -432,7 +445,9 @@ def pdf_to_doc(data: bytes, url: str) -> dict:
     md = re.sub(r"<!--[\s\S]*?-->", "", md)
     md = re.sub(r"<br\s*/?>", " ", md)
     meta_title = (pdf.metadata or {}).get("title") or ""
+    md = re.sub(r"\*\*[ \t]+\*\*", " ", md)  # "**1.** **Introduction**" -> "**1. Introduction**"
     md = re.sub(r"^\s*\*\*(.+?)\*\*\s*$", r"## \1", md, flags=re.M)  # bold-only lines are usually headings
+    md = drop_figure_labels(md)
     blocks = md_to_blocks(md)
     title = meta_title.strip()
     if blocks and (len(title) < 6 or title.lower().startswith(("microsoft word", "untitled"))):
