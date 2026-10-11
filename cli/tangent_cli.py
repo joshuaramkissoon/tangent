@@ -1,9 +1,12 @@
+#!/usr/bin/env python3
 """tangent: open a markdown file in Tangent.
 
+    tangent                   open Tangent in your browser
     tangent NOTES.md          read it locally; the page reloads when the file changes
     tangent --web NOTES.md    open it on the hosted site instead, packed into the link
     tangent https://...       read a web page
     cat NOTES.md | tangent -  read from stdin
+    tangent --update          update this command
 
 No API keys needed: questions go to the hosted Tangent (or TANGENT_URL, e.g. your own deployment).
 Local mode runs a small server on 127.0.0.1 that serves the file, any images next to it, and passes
@@ -28,6 +31,8 @@ import webbrowser
 import zlib
 from pathlib import Path
 
+VERSION = "0.2.0"
+SOURCE = "https://raw.githubusercontent.com/joshuaramkissoon/tangent/main/cli/tangent_cli.py"
 UPSTREAM = os.environ.get("TANGENT_URL", "https://tangentially.vercel.app").rstrip("/")
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
                ".webp": "image/webp", ".svg": "image/svg+xml", ".avif": "image/avif"}
@@ -195,13 +200,40 @@ def serve(doc: Doc, port_out=None, open_browser=True):
     srv.serve_forever()
 
 
+def update():
+    me = Path(__file__).resolve()
+    if "site-packages" in me.parts:
+        sys.exit("tangent: installed as a package; update it with the tool you installed it with "
+                 "(e.g. uv tool upgrade tangent-cli).")
+    try:
+        new = urllib.request.urlopen(SOURCE, timeout=20).read()
+    except (urllib.error.URLError, OSError) as e:
+        sys.exit(f"tangent: couldn't download the update: {e}")
+    if not new.startswith(b"#!/usr/bin/env python3"):
+        sys.exit("tangent: the download didn't look right; nothing changed.")
+    tmp = me.with_suffix(".new")
+    tmp.write_bytes(new)
+    tmp.chmod(0o755)
+    tmp.replace(me)
+    print("tangent is up to date.")
+
+
 def main():
     ap = argparse.ArgumentParser(prog="tangent", description="Open a markdown file (or a link) in Tangent.")
-    ap.add_argument("target", help="a markdown file, a URL, or - for stdin")
+    ap.add_argument("target", nargs="?", help="a markdown file, a URL, or - for stdin (nothing opens Tangent)")
     ap.add_argument("--web", action="store_true", help="open on the hosted site, with the file packed into the link")
     ap.add_argument("--foreground", action="store_true", help="keep the local server attached to this terminal")
+    ap.add_argument("--update", action="store_true", help="update the tangent command to the latest version")
+    ap.add_argument("--version", action="version", version=f"tangent {VERSION}")
     ap.add_argument("--serve", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
+
+    if args.update:
+        return update()
+    if not args.target:
+        webbrowser.open(UPSTREAM)
+        print(f"Opened {UPSTREAM}")
+        return
 
     if args.target.startswith(("http://", "https://")):
         webbrowser.open(f"{UPSTREAM}/?url={urllib.parse.quote(args.target, safe='')}")

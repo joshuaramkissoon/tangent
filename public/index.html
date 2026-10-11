@@ -62,6 +62,9 @@
     </div>
   </div>
   <div class="landing-alt">
+    <button id="fileBtn" class="linkish">Open a file</button>
+    <input type="file" id="fileInput" accept=".md,.markdown,.txt,.pdf,.html,.htm,text/markdown,text/plain,application/pdf,text/html" hidden>
+    <span>·</span>
     <button id="sampleBtn" class="linkish">Try a sample text</button>
     <span>·</span>
     <button id="pasteBtn" class="linkish">Paste text instead</button>
@@ -73,6 +76,7 @@
   <p class="landing-err" id="landingErr" role="alert"></p>
   <ul class="landing-hints">
     <li><kbd>select</kbd> any words, then just start typing to ask</li>
+    <li>drop a markdown, PDF or HTML file anywhere to read it</li>
     <li>hold <kbd>V</kbd> and ask out loud</li>
     <li><kbd>s</kbd> spine · <kbd>f</kbd> focus · <kbd>j</kbd>/<kbd>k</kbd> move</li>
   </ul>
@@ -124,6 +128,7 @@
 
 <div class="ruler" id="rulerBand" hidden></div>
 <div class="toast" id="toast" role="status"></div>
+<div class="dropzone" id="dropzone" hidden><span>Drop to read</span></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@mozilla/readability@0.5.0/Readability.js"></script>
 <script src="/extract.js"></script>

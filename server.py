@@ -487,6 +487,24 @@ async def fetch_page(url: str):
     return {"url": str(r.url), "html": r.text[:2_000_000]}  # stays under serverless response limits (4.5 MB)
 
 
+@app.post("/api/pdf", dependencies=[limit("fetch")])
+async def read_pdf(file: UploadFile = File(...)):
+    """A PDF the reader opened from their computer."""
+    data = await file.read(4_000_001)
+    if len(data) > 4_000_000:
+        raise HTTPException(413, "That PDF is over 4 MB. Try a link to it instead, or run Tangent yourself.")
+    if data[:5] != b"%PDF-":
+        raise HTTPException(415, "That file isn't a PDF.")
+    try:
+        doc = await asyncio.to_thread(pdf_to_doc, data, file.filename or "document.pdf")
+    except ImportError:
+        raise HTTPException(415, "PDF support isn't installed on this server.")
+    except Exception as e:
+        raise HTTPException(422, f"Couldn't read that PDF: {e}")
+    doc.update(byline=file.filename, source=None)
+    return doc
+
+
 class DocIn(BaseModel):
     title: str = Field(max_length=500)
     subtitle: str | None = Field(None, max_length=1000)

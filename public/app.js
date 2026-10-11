@@ -1306,6 +1306,42 @@ $("#sampleBtn").onclick = () => {
   state.trail = [];
   load(async () => ({ id: "sample", source: null, blocks: null, ...(await (await api("/sample.json")).json()) }));
 };
+// Files from the reader's computer: markdown and text are read here, web pages go through the same
+// extraction as links, and PDFs are converted by the server.
+async function readFile(file) {
+  const name = file.name || "Document", ext = name.toLowerCase().split(".").pop();
+  if (ext === "pdf" || file.type === "application/pdf") {
+    const fd = new FormData();
+    fd.append("file", file, name);
+    const r = await fetch("/api/pdf", { method: "POST", body: fd });
+    if (!r.ok) { let m = r.statusText; try { m = (await r.json()).detail || m; } catch {} throw new Error(m); }
+    return r.json();
+  }
+  if (file.size > 5e6) throw new Error("That file is too large to read here.");
+  const text = await file.text();
+  if (ext === "html" || ext === "htm") {
+    const parsed = Extract.run(text, "https://local.file/" + encodeURIComponent(name));
+    return (await api("/api/doc", { ...parsed, source: null, byline: name })).json();
+  }
+  if (!/^(md|markdown|mdown|txt|text)$/.test(ext) && !file.type.startsWith("text/"))
+    throw new Error("Tangent can read markdown, text, HTML and PDF files.");
+  return markdownDoc(text, name);
+}
+const openFile = file => { state.trail = []; load(() => readFile(file)); };
+$("#fileBtn").onclick = () => $("#fileInput").click();
+$("#fileInput").onchange = e => { const f = e.target.files[0]; e.target.value = ""; if (f) openFile(f); };
+let dragDepth = 0;
+const hasFiles = e => [...(e.dataTransfer?.types || [])].includes("Files");
+addEventListener("dragenter", e => { if (hasFiles(e)) { dragDepth++; $("#dropzone").hidden = false; } });
+addEventListener("dragleave", e => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; $("#dropzone").hidden = true; } });
+addEventListener("dragover", e => { if (hasFiles(e)) e.preventDefault(); });
+addEventListener("drop", e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0; $("#dropzone").hidden = true;
+  const f = e.dataTransfer.files[0];
+  if (f) openFile(f);
+});
 $("#pasteBtn").onclick = () => { $("#pasteForm").hidden = !$("#pasteForm").hidden; $("#pasteText").focus(); };
 $("#pasteForm").addEventListener("submit", e => {
   e.preventDefault();
