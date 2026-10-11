@@ -347,7 +347,7 @@ const cascadeQueue = [];
 let cascadeInflight = 0;
 const cascadeObserver = new IntersectionObserver(entries => {
   for (const e of entries) {
-    if (!e.isIntersecting) continue;
+    if (!e.isIntersecting || !state.settings.cascade) continue;
     const i = +e.target.dataset.p;
     cascadeObserver.unobserve(e.target);
     if (!state.cascades.has(i)) enqueueCascade(i);
@@ -355,7 +355,7 @@ const cascadeObserver = new IntersectionObserver(entries => {
 }, { rootMargin: "600px 0px" });
 
 function enqueueCascade(i) {
-  if (cascadeQueue.includes(i)) return;
+  if (!state.settings.cascade || cascadeQueue.includes(i)) return;
   cascadeQueue.push(i);
   paraEl(i)?.querySelector(".ptext").classList.add("cascading");
   pumpCascade();
@@ -367,7 +367,12 @@ function pumpCascade() {
     cascadeInflight++;
     api("/api/cascade", { text: paraText(i) })
       .then(r => r.json())
-      .then(({ units }) => { if (state.doc !== d) return; state.cascades.set(i, units); if (state.settings.cascade) renderParagraph(i, true); })
+      .then(({ units }) => {
+        if (state.doc !== d) return;
+        state.cascades.set(i, units);
+        if (state.settings.cascade) renderParagraph(i, true);
+        else paraEl(i)?.querySelector(".ptext").classList.remove("cascading");  // Spine was turned off meanwhile
+      })
       .catch(() => { paraEl(i)?.querySelector(".ptext").classList.remove("cascading"); })
       .finally(() => { cascadeInflight--; pumpCascade(); });
   }
@@ -450,6 +455,7 @@ function appendCites(p, i) {
 function renderAllParagraphs() {
   if (!state.doc) return;
   cascadeQueue.length = 0;
+  cascadeObserver.disconnect();  // only paragraphs of the current doc, and only while Spine is on
   state.doc.paragraphs.forEach((_, i) => {
     renderParagraph(i);
     if (state.settings.cascade && blockOf(i).t === "p" && !state.cascades.has(i)) cascadeObserver.observe(paraEl(i));
