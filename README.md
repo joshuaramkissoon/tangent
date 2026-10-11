@@ -14,6 +14,20 @@ Tangent is a reader that answers questions in the margin of whatever you're read
 - **Footnotes as sidenotes.** Click a footnote marker and the note opens beside the text instead of at the bottom of the page.
 - **Built for readers who find text hard.** A Clear profile with hyperlegible type and spacing; Spine, which sets the core of each sentence in full ink and the details softer; a "Before you read" brief with the gist and key terms; focus mode; a reading ruler; and voice questions.
 
+## Read your own markdown
+
+The `tangent` command opens any markdown file in Tangent. It's handy for reading the docs and plans your coding agent writes. No API keys are needed.
+
+```sh
+uv tool install "git+https://github.com/joshuaramkissoon/tangent#subdirectory=cli"
+
+tangent PLAN.md            # opens in your browser and reloads as the file changes
+tangent --web PLAN.md      # opens on the hosted site instead, with the file packed into the link
+cat notes.md | tangent -   # read from stdin
+```
+
+Local mode runs a small server on `127.0.0.1`. It serves the file and any images beside it, and passes questions on to the hosted Tangent. It stops a minute after you close the tab. When the file changes, the page keeps your place, and your margin notes stay as long as their paragraph is unchanged. With `--web`, the file travels in the part of the link after `#`, which browsers never send to a server. Questions you ask still send the text to the model. Set `TANGENT_URL` to use your own deployment.
+
 ## Run it
 
 You need [uv](https://docs.astral.sh/uv/) and at least one model key.

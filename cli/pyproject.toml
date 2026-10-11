@@ -1,0 +1,17 @@
+[project]
+name = "tangent-cli"
+version = "0.1.0"
+description = "Open markdown files in Tangent: read them with answers in the margin."
+requires-python = ">=3.9"
+license = "MIT"
+dependencies = []
+
+[project.scripts]
+tangent = "tangent_cli:main"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["tangent_cli"]

@@ -156,7 +156,7 @@ function openDoc(doc, restore = null) {
     window.scrollTo(0, 0);
   }
   updateHint();
-  history.replaceState(null, "", doc.source ? "?url=" + encodeURIComponent(doc.source)
+  if (!doc.keepUrl) history.replaceState(null, "", doc.source ? "?url=" + encodeURIComponent(doc.source)
     : doc.question ? `?q=${encodeURIComponent(doc.question)}&len=${doc.length}&level=${doc.level}` : location.pathname);
 }
 
@@ -1343,9 +1343,57 @@ fetch("/api/config").then(r => r.json()).then(c => {
   state.config = c;
   $("#modelInfo").textContent = `${c.provider} · quick: ${c.quick} · deep: ${c.deep}`;
 }).catch(() => {});
+// ---------------------------------------------------------------- markdown files (the tangent CLI)
+
+// A markdown file becomes a document like pasted text; its first "# " heading is the title.
+async function markdownDoc(text, name) {
+  const h1 = text.match(/^\s*#\s+(.+?)\s*#*\s*$/m);
+  const title = h1 && !text.slice(0, h1.index).trim() ? h1[1] : name.replace(/\.(md|markdown)$/i, "");
+  const doc = await (await api("/api/text", { title, text })).json();
+  return { ...doc, byline: name, keepUrl: true };
+}
+
+// tangent --web: the file travels in the link's #fragment (raw deflate, base64url), which never reaches a server.
+async function openPacked(hash) {
+  const p = new URLSearchParams(hash.slice(1));
+  const b64 = p.get("md").replace(/-/g, "+").replace(/_/g, "/");
+  const bytes = Uint8Array.from(atob(b64 + "===".slice((b64.length + 3) % 4)), c => c.charCodeAt(0));
+  const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).text();
+  return markdownDoc(text, p.get("name") || "Document");
+}
+
+// tangent FILE: a local server serves the file and says when it changes. Reloads keep the scroll
+// position, and notes whose paragraph is unchanged stay attached to it.
+async function openLocal() {
+  const fetchDoc = async () => { const f = await (await api("/_local/doc")).json(); return markdownDoc(f.text, f.name); };
+  if (!await load(fetchDoc)) return;
+  const events = new EventSource("/_local/events");
+  let busy = false;
+  events.addEventListener("change", async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const old = state.doc, doc = await fetchDoc();
+      if (state.doc !== old) return;  // the reader moved on to something else
+      const notes = state.notes.filter(n => {
+        const k = doc.paragraphs.indexOf(old.paragraphs[n.para]);
+        if (k < 0) return false;
+        n.para = k;
+        return true;
+      });
+      openDoc(doc, { notes, cascades: new Map(), scaffold: state.scaffold, y: scrollY });
+      toast("Updated", 1200);
+    } catch (e) { toast("Couldn't reload: " + e.message, 4000); }
+    finally { busy = false; }
+  });
+}
+
 const initialUrl = new URLSearchParams(location.search).get("url");
 const qs = new URLSearchParams(location.search);
 // Links open a reading on arrival, but not inside another site's frame (each visit spends API credits).
 const framed = window.top !== window.self;
-if (initialUrl && !framed) { $("#urlInput").value = initialUrl; load(() => readUrl(initialUrl)); }
+if (framed) {}
+else if (location.hash.startsWith("#md=")) load(() => openPacked(location.hash));
+else if (qs.has("local")) openLocal();
+else if (initialUrl && !framed) { $("#urlInput").value = initialUrl; load(() => readUrl(initialUrl)); }
 else if (qs.get("q") && !framed) compose(qs.get("q"), { length: qs.get("len") || "primer", level: qs.get("level") || "standard" });
