@@ -874,14 +874,19 @@ function placeNote(note) {
 function layoutNotes() {
   if (!state.doc) return;
   if (!wide()) { state.notes.forEach(placeNote); return; }
-  const margin = $("#margin");
-  const sorted = [...state.notes].sort((a, b) => a.para - b.para || a.id - b.id);
+  const margin = $("#margin"), origin = margin.getBoundingClientRect().top;
+  // A note sits level with the words it's about (the first line of its selection), else with its paragraph.
+  const anchorTop = n => {
+    if (n.selection && (!n.range || !n.range.startContainer.isConnected)) n.range = findRange(n.para, n.selection);
+    const marker = n.kind === "fn" && $$(".fn", paraEl(n.para)).find(b => b.dataset.fn === String(n.fn));
+    const line = marker ? marker.getBoundingClientRect() : n.range?.getClientRects()[0];
+    return (line ? line.top - 6 : paraEl(n.para).getBoundingClientRect().top) - origin;
+  };
+  state.notes.forEach(n => { placeNote(n); n.want = anchorTop(n); });
+  const sorted = [...state.notes].sort((a, b) => a.want - b.want || a.id - b.id);
   let bottom = 0;
   for (const n of sorted) {
-    placeNote(n);
-    const p = paraEl(n.para);
-    const want = p.offsetTop - margin.offsetTop;
-    const top = Math.max(want, bottom + 10);
+    const top = Math.max(n.want, bottom + 10);
     n.el.style.top = top + "px";
     bottom = top + n.el.offsetHeight;
   }
@@ -890,16 +895,20 @@ function layoutNotes() {
 
 // ---------------------------------------------------------------- highlights (non-destructive)
 
+// Finds the selected words in a paragraph, even when they cross formatting (bold, links, code).
 function findRange(i, text) {
   const p = paraEl(i)?.querySelector(".ptext");
   if (!p || !text) return null;
-  const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
-  let node;
-  while ((node = walker.nextNode())) {
-    const k = node.data.indexOf(text);
-    if (k >= 0) { const r = new Range(); r.setStart(node, k); r.setEnd(node, k + text.length); return r; }
-  }
-  return null;
+  const nodes = [], walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+  let all = "", node;
+  while ((node = walker.nextNode())) { nodes.push([node, all.length]); all += node.data; }
+  const k = all.indexOf(text);
+  if (k < 0) return null;
+  const at = pos => { for (let j = nodes.length - 1; j >= 0; j--) if (nodes[j][1] <= pos) return [nodes[j][0], pos - nodes[j][1]]; };
+  const r = new Range();
+  r.setStart(...at(k));
+  r.setEnd(...at(k + text.length - 1)); r.setEnd(r.endContainer, r.endOffset + 1);
+  return r;
 }
 
 function refreshHighlights() {
