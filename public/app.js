@@ -1086,7 +1086,8 @@ window.addEventListener("scroll", () => {
 
 // Records audio ourselves (getUserMedia always shows the browser's permission prompt, unlike the
 // Web Speech API) and transcribes server-side with Whisper.
-const voice = { rec: null, ctx: null, startedAt: 0, toggled: false, button: null, stopWanted: false, stream: null, chunks: [], meter: null };
+const voice = { rec: null, ctx: null, startedAt: 0, toggled: false, button: null, stopWanted: false, stream: null, chunks: [], meter: null,
+  peak: 0, partial: "", partialChunks: 0, partialBusy: false, live: null };
 
 function voiceContext() {
   const pend = state.pending;
@@ -1098,7 +1099,8 @@ function voiceContext() {
 async function startVoice(button) {
   if (!state.doc || voice.rec) return;
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast("Voice isn't supported in this browser");
-  Object.assign(voice, { rec: "starting", stopWanted: false, ctx: voiceContext(), startedAt: Date.now(), button, chunks: [] });
+  Object.assign(voice, { rec: "starting", stopWanted: false, ctx: voiceContext(), startedAt: Date.now(), button, chunks: [],
+    peak: 0, partial: "", partialChunks: 0, partialBusy: false });
   button?.classList.add("held");
   $("#heard").textContent = "Starting mic…";
   $("#listenAbout").textContent = voice.ctx.selection
@@ -1125,9 +1127,61 @@ async function startVoice(button) {
   rec.onstop = sendVoice;
   voice.rec = rec;
   startMeter(stream);
-  rec.start();
+  rec.start(250);  // small slices, so the words so far can be transcribed while you talk
+  voice.live = setInterval(transcribePartial, 900);
   $("#heard").textContent = "Listening…";
   if (voice.stopWanted) stopVoice();
+}
+
+// Live captions: re-transcribe everything said so far (about once a second) and show it as you talk.
+// Each clip is short, and Whisper returns in a few hundred milliseconds, so this trails speech by about a second.
+async function transcribePartial() {
+  const n = voice.chunks.length;
+  if (voice.partialBusy || voice.rec?.state !== "recording" || n === voice.partialChunks || voice.peak < SPEECH_LEVEL) return;
+  voice.partialBusy = true;
+  try {
+    const text = await transcribe(voice.chunks.slice(0, n), true);
+    if (voice.rec?.state === "recording" && text) {
+      voice.partial = text;
+      voice.partialChunks = n;
+      showHeard(text, true);
+    }
+  } catch {} finally { voice.partialBusy = false; }
+}
+
+function showHeard(text, live) {
+  const el = $("#heard");
+  el.classList.toggle("words", !!text);
+  el.textContent = text ? `“${text}”` : "Listening…";
+  el.classList.toggle("live", !!live);
+}
+
+// A short hint of the words the question is likely to use (Whisper's prompt must stay under ~100 characters):
+// the selected phrase, or the title plus the paragraph's distinctive terms (names, jargon, long words).
+function vocabulary(ctx) {
+  if (ctx.selection) return ctx.selection.slice(0, 100);
+  const words = (paraText(ctx.para) || "").match(/\b(?:[A-Z][\w-]{2,}|[a-z][\w-]{8,})\b/g) || [];
+  let hint = state.doc.title.slice(0, 60);
+  for (const w of new Set(words)) {
+    if (hint.length + w.length + 2 > 100) break;
+    if (!hint.includes(w)) hint += ", " + w;
+  }
+  return hint;
+}
+
+async function transcribe(chunks, partial = false) {
+  const type = (voice.rec?.mimeType || "audio/webm");
+  const fd = new FormData();
+  fd.append("file", new Blob(chunks, { type }), "question." + (type.includes("mp4") ? "mp4" : type.includes("ogg") ? "ogg" : "webm"));
+  // Vocabulary hint so names and jargon from the text get spelled right.
+  const ctx = voice.ctx;
+  fd.append("prompt", vocabulary(ctx));
+  if (partial) fd.append("partial", "true");
+  const r = await fetch("/api/transcribe", { method: "POST", body: fd });
+  let data = {};
+  try { data = await r.json(); } catch {}
+  if (!r.ok) throw new Error(r.status === 429 ? "You've hit the voice limit for now. Try typing instead." : data.detail || "Voice is unavailable right now. Try typing instead.");
+  return (data.text || "").trim();
 }
 
 function stopVoice() {
@@ -1135,25 +1189,28 @@ function stopVoice() {
   else if (voice.rec?.state === "recording") voice.rec.stop();
 }
 
+const SPEECH_LEVEL = 0.12;  // meter level (0-1) that counts as someone talking rather than room noise
+
 async function sendVoice() {
   const { ctx, chunks } = voice;
-  const type = voice.rec.mimeType || "audio/webm";
+  clearInterval(voice.live);
   stopMeter();
   voice.stream?.getTracks().forEach(t => t.stop());
-  const blob = new Blob(chunks, { type });
-  if (Date.now() - voice.startedAt < 500 || blob.size < 1500) { resetVoice(); return toast("Didn't catch that. Hold while you talk"); }
-  $("#heard").textContent = "Transcribing…";
-  const fd = new FormData();
-  fd.append("file", blob, "question." + (type.includes("mp4") ? "mp4" : type.includes("ogg") ? "ogg" : "webm"));
-  // Vocabulary hint so names and jargon from the text get spelled right.
-  fd.append("prompt", `${state.doc.title}. ${ctx.selection || paraText(ctx.para).slice(0, 300)}`);
+  const size = chunks.reduce((n, c) => n + c.size, 0);
+  if (Date.now() - voice.startedAt < 500) { resetVoice(); return toast("Hold V (or the mic) while you talk"); }
+  // Nothing above room noise: say so instead of sending silence to be transcribed.
+  if (voice.peak < SPEECH_LEVEL || size < 1500) { resetVoice(); return toast("Didn't hear anything. Check your mic is the one selected", 3500); }
   try {
-    const r = await fetch("/api/transcribe", { method: "POST", body: fd });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.detail || r.statusText);
+    // If the live caption already covers everything recorded, use it; otherwise finish with the whole clip.
+    let text = voice.partialChunks === chunks.length ? voice.partial : "";
+    if (!text) {
+      $("#heard").classList.add("finishing");
+      if (!voice.partial) $("#heard").textContent = "Transcribing…";
+      text = await transcribe(chunks);
+    }
     resetVoice();
-    if (!data.text) return toast("Didn't catch that");
-    createNote({ ...ctx, question: data.text });
+    if (!text) return toast("Didn't catch any words. Try again a little closer to the mic", 3500);
+    createNote({ ...ctx, question: text });
     getSelection().removeAllRanges();
     hideSelbar();
   } catch (e) {
@@ -1163,7 +1220,9 @@ async function sendVoice() {
 }
 
 function resetVoice() {
+  clearInterval(voice.live);
   stopMeter();
+  $("#heard").className = "heard";
   voice.button?.classList.remove("held");
   Object.assign(voice, { rec: null, toggled: false, button: null, stream: null, stopWanted: false });
   $("#listening").hidden = true;
@@ -1194,6 +1253,7 @@ function startMeter(stream) {
       let sum = 0;
       for (const v of buf) sum += ((v - 128) / 128) ** 2;
       const level = Math.min(1, Math.sqrt(sum / buf.length) * 6);
+      voice.peak = Math.max(voice.peak, level);
       bars.forEach((b, k) => { b.style.transform = `scaleY(${0.15 + level * [0.6, 0.85, 1, 0.85, 0.6][k]})`; });
       voice.meter.raf = requestAnimationFrame(tick);
     };

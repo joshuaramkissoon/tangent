@@ -690,3 +690,10 @@ button.crumb:hover i { color: var(--rubric); }
 /* Rabbit holes: start a composed reading from a note or a selection */
 .note-foot .deeper, .selbar .deeper { color: var(--rubric); }
 .note-foot .deeper .spark { font-size: .8em; }
+
+/* Live captions while talking */
+.heard.words { font-family: var(--serif, inherit); font-style: italic; }
+.heard.live::after { content: ""; display: inline-block; width: .45em; height: .45em; margin-left: .35em; border-radius: 50%;
+  background: var(--rubric); vertical-align: middle; animation: pulse 1s ease-in-out infinite; }
+.heard.finishing { opacity: .7; }
+@keyframes pulse { 50% { opacity: .25; } }

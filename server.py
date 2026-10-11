@@ -82,7 +82,7 @@ async def headers(request, call_next):
 # this as a speed bump and set spend limits with your model providers too. TANGENT_RATE_LIMIT=off disables it.
 
 LIMITS = {"compose": (20, 3600), "ask": (150, 3600), "fetch": (60, 3600), "spine": (1500, 3600),
-          "brief": (40, 3600), "voice": (60, 3600), "doc": (120, 3600)}
+          "brief": (40, 3600), "voice": (900, 3600), "doc": (120, 3600)}
 _hits: dict[tuple[str, str], deque] = defaultdict(deque)
 
 
@@ -1119,10 +1119,11 @@ async def compose(body: ComposeIn):
 # ---------- voice ----------
 
 TRANSCRIBE_MODEL = os.environ.get("TANGENT_TRANSCRIBE_MODEL", "openai/whisper-large-v3")
+FALLBACK_TRANSCRIBE_MODEL = os.environ.get("TANGENT_FALLBACK_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
 
 
 @app.post("/api/transcribe", dependencies=[limit("voice")])
-async def transcribe(request: Request, file: UploadFile = File(...), prompt: str = Form("")):
+async def transcribe(request: Request, file: UploadFile = File(...), prompt: str = Form(""), partial: bool = Form(False)):
     # Multipart posts skip CORS preflight, so refuse ones sent from other sites.
     origin = request.headers.get("origin")
     if origin and host_of(origin) != (request.headers.get("host") or "").split(":")[0]:
@@ -1133,14 +1134,44 @@ async def transcribe(request: Request, file: UploadFile = File(...), prompt: str
     audio = await file.read(4_000_001)
     if len(audio) > 4_000_000:
         raise HTTPException(413, "That recording is too long.")
-    async with httpx.AsyncClient(timeout=30) as h:
-        r = await h.post("https://api.together.xyz/v1/audio/transcriptions",
-                         headers={"Authorization": f"Bearer {key}"},
-                         data={"model": TRANSCRIBE_MODEL, "prompt": prompt[:800]},
-                         files={"file": (file.filename or "question.webm", audio, file.content_type or "audio/webm")})
-    if r.status_code != 200:
-        raise HTTPException(502, f"Transcription failed: {r.text[:200]}")
-    return {"text": r.json().get("text", "").strip()}
+    # Browsers label clips "audio/webm;codecs=opus"; Together answers 503 unless the type is bare.
+    name, ctype = file.filename or "question.webm", (file.content_type or "audio/webm").split(";")[0].strip()
+    # Together's Whisper first; if it's down, retry once, then fall back to OpenAI when a key is set.
+    # Together's Whisper answers 503 when the vocabulary prompt is longer than about 120 characters.
+    if len(prompt) > 100:
+        prompt = prompt[:100].rsplit(" ", 1)[0]
+    # Live captions (partial) try once and fail fast: the next one is only a second away.
+    attempts = [("https://api.together.xyz/v1/audio/transcriptions", key, TRANSCRIBE_MODEL)] * (1 if partial else 2)
+    if os.environ.get("OPENAI_API_KEY") and not partial:
+        attempts.append(("https://api.openai.com/v1/audio/transcriptions", os.environ["OPENAI_API_KEY"], FALLBACK_TRANSCRIBE_MODEL))
+    r = None
+    async with httpx.AsyncClient(timeout=20) as h:
+        for url, token, model in attempts:
+            try:
+                r = await h.post(url, headers={"Authorization": f"Bearer {token}"}, data={"model": model, "prompt": prompt[:800]},
+                                 files={"file": (name, audio, ctype)})
+            except httpx.HTTPError as e:
+                print(f"transcribe error ({model}): {e}")
+                continue
+            if r.status_code == 200 or r.status_code < 500 and r.status_code != 429:
+                break
+            print(f"transcribe failed {r.status_code} ({model}): {r.text[:200]}")
+    if r is None or r.status_code != 200:
+        if r is not None and r.status_code < 500 and r.status_code != 429:  # usually audio too short or without speech
+            return {"text": ""}
+        raise HTTPException(502, "Voice is unavailable right now. Try typing instead.")
+    text = r.json().get("text", "").strip()
+    return {"text": "" if is_phantom(text, prompt) else text}
+
+
+# On silence or noise, Whisper tends to invent stock phrases or repeat the vocabulary prompt back.
+PHANTOMS = {"", "you", "thank you", "thanks", "thank you for watching", "thanks for watching", "bye", "okay", "so",
+            "please subscribe", "subtitles by the amaraorg community"}
+
+
+def is_phantom(text: str, prompt: str) -> bool:
+    t = re.sub(r"[^\w ]", "", text.lower()).strip()
+    return t in PHANTOMS or (len(t) > 12 and t in re.sub(r"[^\w ]", "", prompt.lower()))
 
 
 @app.get("/api/config")
