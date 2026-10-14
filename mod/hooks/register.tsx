@@ -288,9 +288,14 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'tangent' }, async ($, e) => {
-    const arg = e.args.trim()
+    // A path as typed at a shell: ~ for home, otherwise relative to the session's folder.
+    const arg = e.args.trim().replace(/^(['"])(.*)\1$/, '$2')
     const path = arg
-      ? arg.startsWith('/') ? arg : `${await $.session.cwd()}/${arg}`
+      ? arg.startsWith('/')
+        ? arg
+        : arg === '~' || arg.startsWith('~/')
+          ? `${(await $.env.get('HOME')) ?? ''}${arg.slice(1)}`
+          : `${await $.session.cwd()}/${arg}`
       : (await read($, written)) ?? (await read($, doc))?.path ?? null
     if (!path) {
       await $.ui.open({ id: PANE, title: 'Tangent' })
