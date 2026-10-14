@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API latency report</title>
+<style>
+  :root { --bg: #fbfaf7; --fg: #1d1c1a; --muted: #6b675f; --line: #e6e2d9; --card: #fff; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #191817; --fg: #ece9e2; --muted: #a29d93; --line: #33312d; --card: #22211f; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 40px 16px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .stat b { display: block; font-size: 26px; }
+  .stat span { color: var(--muted); font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); }
+  @media (max-width: 560px) { .stats { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>API latency, last 7 days</h1>
+  <section class="stats">
+    <div class="stat"><b>412ms</b><span>p95 across read endpoints</span></div>
+    <div class="stat"><b>81%</b><span>of requests repeat within 60s</span></div>
+    <div class="stat"><b>74%</b><span>of database time is repeat work</span></div>
+  </section>
+  <h2>By endpoint</h2>
+  <table>
+    <thead><tr><th>Endpoint</th><th>p50</th><th>p95</th><th>Share of traffic</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /v1/papers/:id</code></td><td>120ms</td><td>380ms</td><td>58%</td></tr>
+      <tr><td><code>GET /v1/search</code></td><td>210ms</td><td>640ms</td><td>37%</td></tr>
+      <tr><td><code>POST /v1/notes</code></td><td>45ms</td><td>110ms</td><td>5%</td></tr>
+    </tbody>
+  </table>
+  <p>Most of the time goes to answering the same question again: a paper that goes viral is fetched thousands of times a minute, each one a fresh database query.</p>
+</main>
+</body>
+</html>
