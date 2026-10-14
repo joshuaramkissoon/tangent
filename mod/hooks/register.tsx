@@ -17,7 +17,7 @@ const notes = atom({ plugin: 'tangent', key: 'notes' } as const, [])
 const sel = atom({ plugin: 'tangent', key: 'sel' } as const, null)
 const dismissed = atom({ plugin: 'tangent', key: 'dismissed' } as const, null)
 const written = atom({ plugin: 'tangent', key: 'written' } as const, null)
-const asking = atom({ plugin: 'tangent', key: 'asking' } as const, false)
+const asking = atom({ plugin: 'tangent', key: 'asking' } as const, false as false | 'ask' | 'comment')
 
 const SYSTEM = `You are Tangent, a reading companion that answers in the margin of what someone is reading.
 Answer the reader directly, in plain words, with no preamble and no headings.
@@ -65,19 +65,19 @@ async function paneIsOpen($: any): Promise<boolean> {
 }
 
 // The actions on a transcript selection, drawn in the band above the prompt.
-function actionStrip($: any, ui: any, s: Sel, isAsking: boolean) {
+function actionStrip($: any, ui: any, s: Sel, open: false | 'ask' | 'comment') {
   const { Box, Button, Text, Input } = ui
-  if (isAsking) {
+  if (open) {
     return (
       <Box gap={1}>
         <Text color="magenta">✦</Text>
         <Text dimColor>“{short(s.text, 30)}”</Text>
         <Input
-          key="question"
-          placeholder="Ask about this, or leave a comment…"
-          submitLabel="ask"
+          key={open}
+          placeholder={open === 'ask' ? 'Ask about this…' : 'A comment for Claude…'}
+          submitLabel={open === 'ask' ? 'ask' : 'add'}
           autoFocus
-          onSubmit={(value: string) => (value.trim() ? annotate($, 'ask', s.text, value.trim()) : update($, asking, () => false))}
+          onSubmit={(value: string) => (value.trim() ? annotate($, open, s.text, value.trim()) : update($, asking, () => false as const))}
         />
       </Box>
     )
@@ -87,8 +87,9 @@ function actionStrip($: any, ui: any, s: Sel, isAsking: boolean) {
       <Text color="magenta">✦</Text>
       <Text dimColor>“{short(s.text, 40)}”</Text>
       <Button key="explain" label="Explain" variant="primary" onPress={() => annotate($, 'explain', s.text)} />
-      <Button key="ask" label="Ask…" onPress={() => update($, asking, () => true)} />
+      <Button key="ask" label="Ask…" onPress={() => update($, asking, () => 'ask' as const)} />
       <Button key="deeper" label="Deeper" onPress={() => annotate($, 'deeper', s.text)} />
+      <Button key="comment" label="Comment…" onPress={() => update($, asking, () => 'comment' as const)} />
       <Button key="hide" label="×" plain role="dismiss" onPress={() => update($, dismissed, () => s.text)} />
     </Box>
   )
@@ -121,29 +122,63 @@ async function contextFor($: any, quote: string, list: Note[], parentId?: string
   return { text: `The reader is reading this conversation with a coding assistant:\n\n${recent}` }
 }
 
+// DeepSeek on Together, streamed so the first words show at once. $.http.fetch only hands back a whole body,
+// so curl streams it; the key reaches curl through its environment, never its arguments.
+async function streamTogether($: any, key: string, model: string, context: string, ask: string, maxTokens: number, onText: (t: string) => void) {
+  let started = false
+  const run = (async () => {
+    const out = $.process.spawn({
+      argv: [
+        'curl', '-sSN', '--max-time', '30',
+        '--variable', '%TANGENT_TOGETHER_KEY',
+        '--expand-header', 'Authorization: Bearer {{TANGENT_TOGETHER_KEY}}',
+        '-H', 'Content-Type: application/json',
+        '--data-binary', '@-',
+        TOGETHER,
+      ],
+      env: { TANGENT_TOGETHER_KEY: key },
+      input: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        stream: true,
+        reasoning: { enabled: false },
+        messages: [
+          { role: 'system', content: SYSTEM },
+          { role: 'user', content: `${context}\n\n${ask}` },
+        ],
+      }),
+    })
+    let buf = ''
+    let text = ''
+    for await (const c of out) {
+      if (c.stream !== 'stdout') continue
+      buf += c.text
+      for (let nl = buf.indexOf('\n'); nl >= 0; nl = buf.indexOf('\n')) {
+        const line = buf.slice(0, nl).trim()
+        buf = buf.slice(nl + 1)
+        if (!line.startsWith('data:') || line === 'data: [DONE]') continue
+        try {
+          const piece = JSON.parse(line.slice(5))?.choices?.[0]?.delta?.content
+          if (piece) {
+            started = true
+            text += piece
+            onText(text)
+          }
+        } catch {}
+      }
+    }
+    return text.trim() || null
+  })().catch(() => null)
+  // No first words within 8s and Haiku answers instead; once words flow, the stream finishes.
+  return Promise.race([run, $.clock.sleep(8_000).then(() => (started ? run : null))])
+}
+
 // DeepSeek on Together when there's a key, as it answers faster; Haiku otherwise, or when Together fails.
-async function answer($: any, context: string, ask: string, maxTokens: number): Promise<{ text?: string; error?: string; via: string }> {
+async function answer($: any, context: string, ask: string, maxTokens: number, onText: (t: string) => void): Promise<{ text?: string; error?: string; via: string }> {
   const key = String(opts.together_api_key ?? '').trim()
   if (key) {
     const model = String(opts.together_model || 'deepseek-ai/DeepSeek-V4.1-Flash')
-    const call = $.http
-      .fetch(TOGETHER, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          max_tokens: maxTokens,
-          reasoning: { enabled: false },
-          messages: [
-            { role: 'system', content: SYSTEM },
-            { role: 'user', content: `${context}\n\n${ask}` },
-          ],
-        }),
-      })
-      .then((r: { ok: boolean; text: string }) => (r.ok ? JSON.parse(r.text)?.choices?.[0]?.message?.content?.trim() || null : null))
-      .catch(() => null)
-    // http.fetch has no timeout of its own.
-    const text: string | null = await Promise.race([call, $.clock.sleep(15_000).then(() => null)])
+    const text = await streamTogether($, key, model, context, ask, maxTokens, onText)
     if (text) return { text, via: (model.split('/').pop() ?? model).toLowerCase() }
   }
   const res = await $.model.complete({
@@ -164,27 +199,36 @@ async function annotate($: any, kind: Note['kind'], quote: string, question?: st
   const note: Note = { id, quote, kind, question, answer: null, parent: ctx.parent }
   await update($, notes, l => [...l, note])
   await update($, dismissed, () => quote)
-  await update($, asking, () => false)
+  await update($, asking, () => false as const)
   // Opening a pane that is already open would send it back to the top.
   if (!(await paneIsOpen($))) await $.ui.open({ id: PANE, title: 'Tangent' })
 
+  // A comment is for Claude, not the model: it's kept as written.
+  if (kind === 'comment') return
+
   const ask = `${kind === 'ask' ? `ask: ${question}` : kind}\n\nThe selected words: "${quote}"`
   const started = await $.clock.now()
-  const got = await answer($, ctx.text, ask, kind === 'deeper' ? 700 : 400)
+  // The answer is drawn as it streams, a few times a second at most.
+  let drawn = 0
+  const onText = (t: string) => {
+    const now = Date.now()
+    if (now - drawn < 80) return
+    drawn = now
+    // A late piece never overwrites the finished answer.
+    void update($, notes, l => l.map(n => (n.id === id && !n.via ? { ...n, answer: t } : n)))
+  }
+  const got = await answer($, ctx.text, ask, kind === 'deeper' ? 700 : 400, onText)
   const ms = (await $.clock.now()) - started
   await update($, notes, l => l.map(n => (n.id === id ? { ...n, answer: got.text ?? null, error: got.error, via: got.via, ms } : n)))
 }
 
-// Comments go to the prompt box, not straight to Claude, so they can be read over first.
+// Only comments go to Claude; explanations and answers are the reader's own. They go to the prompt box,
+// not straight to Claude, so they can be read over first.
 async function sendToClaude($: any, only?: Note) {
   const d: Doc | null = await read($, doc)
-  const list: Note[] = only ? [only] : await read($, notes)
+  const list: Note[] = (only ? [only] : ((await read($, notes)) as Note[])).filter(n => n.kind === 'comment')
   if (!list.length) return
-  const lines = list.map((n, i) => {
-    const said = n.answer ? `\n   (Tangent's note: ${short(n.answer, 240)})` : ''
-    const what = n.kind === 'ask' ? n.question : n.kind === 'deeper' ? 'I wanted to go deeper here.' : 'I needed this explained.'
-    return `${i + 1}. On "${short(n.quote, 160)}": ${what}${said}`
-  })
+  const lines = list.map((n, i) => `${i + 1}. On "${short(n.quote, 160)}": ${n.question}`)
   const head = d ? `Comments on ${d.path}, from reading it in Tangent:` : 'Notes from reading this conversation in Tangent:'
   await $.prompt.fill({ text: `${head}\n\n${lines.join('\n')}\n`, mode: 'insert' })
 }
@@ -212,8 +256,20 @@ export const register: Register = (on, options) => {
       lastSeen = text
       seenAt = now
       await update($, sel, () => (text && text.length <= 4000 ? { text, requestId: s?.requestId } : null))
-      if (!text) await update($, asking, () => false)
+      if (!text) await update($, asking, () => false as const)
     })
+    return next(e)
+  })
+
+  // A /clear starts the pane over too: no doc, no notes, no offer to read the last file.
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear') {
+      await update($, doc, () => null)
+      await update($, notes, () => [])
+      await update($, written, () => null)
+      await update($, sel, () => null)
+      await update($, asking, () => false as const)
+    }
     return next(e)
   })
 
@@ -290,6 +346,7 @@ export const register: Register = (on, options) => {
     const { Box, Button, Text, Markdown, Client } = ui
     const d: Doc | null = await read($, doc)
     const list: Note[] = await read($, notes)
+    const comments = list.filter(n => n.kind === 'comment').length
     const columns = e.props.bodyColumns ?? 80
     const props: DocProps = { text: d?.text ?? '', notes: list, changed: d?.changed ?? [], columns }
     // Surfaces without a Client, and docs too long for one, get the engine's Markdown.
@@ -299,7 +356,7 @@ export const register: Register = (on, options) => {
       <Box flexDirection="column" gap={0}>
         <Box gap={1}>
           <Text bold>{d ? nameOf(d.path) : 'Tangent'}</Text>
-          {list.length > 0 && <Button key="send-all" label={`Send ${list.length} note${list.length > 1 ? 's' : ''} to Claude`} onPress={() => sendToClaude($)} />}
+          {comments > 0 && <Button key="send-all" label={`Send ${comments} comment${comments > 1 ? 's' : ''} to Claude`} onPress={() => sendToClaude($)} />}
           {d && <Button key="open-web" label="Open in Tangent ↗" onPress={() => $.process.run(['tangent', d.path])} />}
           {list.length > 0 && <Button key="clear" label="Clear notes" plain dimColor onPress={() => update($, notes, () => [])} />}
         </Box>

@@ -7,15 +7,25 @@ import type { DocProps, Note } from '../types'
 
 type Style = { bold?: true; italic?: true; code?: true; link?: true; strike?: true; underline?: true; dim?: true; color?: string }
 type Span = { text: string; style: Style }
-type Hit = { x0: number; x1: number; post: JsonValue | 'ask' | 'cancel' | 'hide' }
+type Hit = { x0: number; x1: number; post: JsonValue | 'ask' | 'comment' | 'submit' | 'cancel' | 'hide' }
 // One drawn row: its spans, where its selectable text starts, the note it belongs to, and whether
 // it carries on a wrapped line (so a selection over it joins with a space, not a newline).
 type Row = { spans: Span[]; text: string; from: number; note?: string; soft?: boolean; hits?: Hit[] }
 
 type At = { r: number; c: number }
-type State = { a: At | null; f: At | null; dragging: boolean; asking: boolean; draft: string; last: { at: At; t: number } | null }
+// The selection (anchor and focus), the field open for a question or a comment, and the action under
+// the pointer (by drawn row and its place in that row's hits), drawn lit as a button is on hover.
+type State = {
+  a: At | null
+  f: At | null
+  dragging: boolean
+  asking: false | 'ask' | 'comment'
+  draft: string
+  last: { at: At; t: number } | null
+  hover: { y: number; i: number } | null
+}
 
-const BLANK: State = { a: null, f: null, dragging: false, asking: false, draft: '', last: null }
+const BLANK: State = { a: null, f: null, dragging: false, asking: false, draft: '', last: null, hover: null }
 
 // Blocks are split at blank lines, a fenced code block staying whole. (The hooks module keeps the same
 // split to see which blocks an edit changed; the two live in separate environments.)
@@ -181,25 +191,31 @@ function unitRows(src: string, width: number, gutter: Span[], note?: string): Ro
 
 // A note in the margin: the words it's about, the answer, and what can be done with it.
 function noteRows(n: Note, all: Note[], width: number, depth: number): Row[] {
-  const g = [plain('  '.repeat(depth + 1)), plain('┃ ', { color: 'magenta' })]
-  const mark = n.kind === 'ask' ? '?' : n.kind === 'deeper' ? '↓' : '›'
-  const rows: Row[] = [
-    rowOf([...g, plain(`${mark} “${short(n.quote, Math.max(10, width - 30))}”${n.question ? ` — ${n.question}` : ''}`, { dim: true })], 9999, n.id),
-  ]
-  if (n.answer) {
-    for (const b of blocksOf(n.answer)) for (const u of unitsOf(b)) rows.push(...unitRows(u, width, g, n.id))
+  const isComment = n.kind === 'comment'
+  // A comment is drawn in the accent colour that marks what goes to Claude.
+  const g = [plain('  '.repeat(depth + 1)), plain('┃ ', { color: isComment ? 'claude' : 'magenta' })]
+  const mark = isComment ? '✎' : n.kind === 'ask' ? '?' : n.kind === 'deeper' ? '↓' : '›'
+  const asked = n.kind === 'ask' && n.question ? ` — ${n.question}` : ''
+  const rows: Row[] = [rowOf([...g, plain(`${mark} “${short(n.quote, Math.max(10, width - 30))}”${asked}`, { dim: true })], 9999, n.id)]
+  const body = isComment ? n.question : n.answer
+  if (body) {
+    for (const b of blocksOf(body)) for (const u of unitsOf(b)) rows.push(...unitRows(u, width, g, n.id))
   } else rows.push(rowOf([...g, plain(n.error ?? 'thinking…', { dim: true, italic: true })], 9999, n.id))
+  // Only a comment can go to Claude; an answer is the reader's.
   const pre = g.reduce((k, s) => k + s.text.length, 0)
-  const send = 'Send to Claude'
-  const drop = 'Remove'
-  const meta = n.via ? `   ${n.via} · ${((n.ms ?? 0) / 1000).toFixed(1)}s` : ''
-  rows.push({
-    ...rowOf([...g, plain(send, { underline: true }), plain('  '), plain(drop, { underline: true }), plain(meta, { dim: true })], 9999, n.id),
-    hits: [
-      { x0: pre, x1: pre + send.length, post: { type: 'send', id: n.id } },
-      { x0: pre + send.length + 2, x1: pre + send.length + 2 + drop.length, post: { type: 'remove', id: n.id } },
-    ],
-  })
+  const actions: [string, JsonValue][] = isComment
+    ? [['Send to Claude', { type: 'send', id: n.id }], ['Remove', { type: 'remove', id: n.id }]]
+    : [['Remove', { type: 'remove', id: n.id }]]
+  const spans: Span[] = [...g]
+  const hits: Hit[] = []
+  let x = pre
+  for (const [label, post] of actions) {
+    spans.push(plain(label, { underline: true }), plain('  '))
+    hits.push({ x0: x, x1: x + label.length, post })
+    x += label.length + 2
+  }
+  if (n.via) spans.push(plain(` ${n.via} · ${((n.ms ?? 0) / 1000).toFixed(1)}s`, { dim: true }))
+  rows.push({ ...rowOf(spans, 9999, n.id), hits })
   for (const k of all.filter(x => x.parent === n.id)) rows.push(...noteRows(k, all, width, depth + 1))
   return rows
 }
@@ -269,17 +285,17 @@ const Doc: ClientModule<DocProps, State> = (p, surface) => {
   const parent = span ? rows[span[0].r]?.note : undefined
 
   // The actions sit on the row under the selection's last row: only what follows them moves.
-  const STRIP = ['Explain', 'Ask…', 'Deeper', '×'] as const
+  const STRIP = ['Explain', 'Ask…', 'Deeper', 'Comment…', '×'] as const
   let strip: Row | null = null
   if (picked) {
     const lead = '✦ '
     if (s.asking) {
-      const send = '↵ ask'
-      const text = `${lead}Ask: ${s.draft}▏`
+      const send = s.asking === 'ask' ? '↵ ask' : '↵ add'
+      const text = `${lead}${s.asking === 'ask' ? 'Ask' : 'Comment'}: ${s.draft}▏`
       strip = {
-        ...rowOf([plain(lead, { color: 'magenta' }), plain(`Ask: ${s.draft}`), plain('▏', { color: 'magenta' }), plain('  '), plain(send, { bold: true }), plain('  '), plain('×', { dim: true })], 9999),
+        ...rowOf([plain(lead, { color: 'magenta' }), plain(text.slice(lead.length, -1)), plain('▏', { color: 'magenta' }), plain('  '), plain(send, { bold: true }), plain('  '), plain('×', { dim: true })], 9999),
         hits: [
-          { x0: text.length + 2, x1: text.length + 2 + send.length, post: { type: 'annotate', kind: 'ask', quote: picked, question: s.draft, parent: parent ?? null } },
+          { x0: text.length + 2, x1: text.length + 2 + send.length, post: 'submit' },
           { x0: text.length + 4 + send.length, x1: text.length + 5 + send.length, post: 'cancel' },
         ],
       }
@@ -291,7 +307,7 @@ const Doc: ClientModule<DocProps, State> = (p, surface) => {
         const shown = label === '×' ? label : ` ${label} `
         spans.push(plain(shown, label === 'Explain' ? { bold: true, color: 'magenta' } : label === '×' ? { dim: true } : { bold: true }), plain(' '))
         const post: Hit['post'] =
-          label === 'Ask…' ? 'ask' : label === '×' ? 'hide' : { type: 'annotate', kind: label.toLowerCase(), quote: picked, parent: parent ?? null }
+          label === 'Ask…' ? 'ask' : label === 'Comment…' ? 'comment' : label === '×' ? 'hide' : { type: 'annotate', kind: label.toLowerCase(), quote: picked, parent: parent ?? null }
         hits.push({ x0: x, x1: x + shown.length, post })
         x += shown.length + 1
       }
@@ -307,18 +323,29 @@ const Doc: ClientModule<DocProps, State> = (p, surface) => {
     surface.post(post)
     surface.setState(BLANK)
   }
-  const ask = () => {
-    if (s.draft.trim()) done({ type: 'annotate', kind: 'ask', quote: picked, question: s.draft.trim(), parent: parent ?? null })
+  const submit = () => {
+    if (s.asking && s.draft.trim()) done({ type: 'annotate', kind: s.asking, quote: picked, question: s.draft.trim(), parent: parent ?? null })
+  }
+  const hitAt = (x: number, y: number) => {
+    const i = drawn[y]?.hits?.findIndex(h => x >= h.x0 && x < h.x1) ?? -1
+    return i >= 0 ? { y, i } : null
   }
 
   surface.onPointer((e: ClientPointerEvent) => {
+    // Hovering: redraw only when the action under the pointer changes.
+    if ((e.type === 'move' && !e.button) || e.type === 'enter' || e.type === 'leave') {
+      const h = e.type === 'leave' ? null : hitAt(e.x, e.y)
+      if (h?.y !== s.hover?.y || h?.i !== s.hover?.i) surface.setState({ ...s, hover: h })
+      return
+    }
     if (e.type === 'down' && e.button === 'left') {
-      const row = drawn[e.y]
-      const hit = row?.hits?.find(h => e.x >= h.x0 && e.x < h.x1)
+      const at0 = hitAt(e.x, e.y)
+      const hit = at0 ? drawn[at0.y]!.hits![at0.i]! : null
       if (hit) {
-        if (hit.post === 'ask') return surface.setState({ ...s, asking: true })
+        if (hit.post === 'ask' || hit.post === 'comment') return surface.setState({ ...s, asking: hit.post, draft: '', hover: null })
         if (hit.post === 'cancel' || hit.post === 'hide') return surface.setState(BLANK)
-        return hit.post && typeof hit.post === 'object' && (hit.post as any).kind === 'ask' ? ask() : done(hit.post)
+        if (hit.post === 'submit') return submit()
+        return done(hit.post)
       }
       const r = source(e.y)
       if (r < 0 || r >= rows.length) return surface.setState(BLANK)
@@ -355,11 +382,12 @@ const Doc: ClientModule<DocProps, State> = (p, surface) => {
     if (!picked) return
     if (!s.asking) {
       if (e.key === 'return') return done({ type: 'annotate', kind: 'explain', quote: picked, parent: parent ?? null })
-      if (e.key === 'a' || e.key === '?') return surface.setState({ ...s, asking: true })
+      if (e.key === 'a' || e.key === '?') return surface.setState({ ...s, asking: 'ask', draft: '' })
+      if (e.key === 'c') return surface.setState({ ...s, asking: 'comment', draft: '' })
       if (e.key === 'd') return done({ type: 'annotate', kind: 'deeper', quote: picked, parent: parent ?? null })
       return
     }
-    if (e.key === 'return') return ask()
+    if (e.key === 'return') return submit()
     if (e.key === 'backspace' || e.key === 'delete') return surface.setState({ ...s, draft: s.draft.slice(0, -1) })
     if (e.key.length === 1 && !e.ctrl && !e.meta) return surface.setState({ ...s, draft: s.draft + e.key })
   })
@@ -374,19 +402,21 @@ const Doc: ClientModule<DocProps, State> = (p, surface) => {
     inverse: on || undefined,
   })
 
-  // A row's spans, cut where the selection starts and ends so the selected cells draw inverted.
-  const drawRow = (row: Row, r: number, key: string) => {
+  // A row's spans, cut where the selection (or the hovered action) starts and ends, so those cells draw inverted.
+  const drawRow = (row: Row, r: number, y: number) => {
     const lo = span && r >= span[0].r && r <= span[1].r ? Math.max(row.from, r === span[0].r ? span[0].c : 0) : -1
     const hi = lo >= 0 ? (r === span![1].r ? span![1].c + 1 : row.text.length) : -1
+    const lit = s.hover?.y === y ? row.hits?.[s.hover.i] : undefined
+    const ranges: [number, number][] = [...(lo >= 0 ? [[lo, hi] as [number, number]] : []), ...(lit ? [[lit.x0, lit.x1] as [number, number]] : [])]
     const out: any[] = []
     let x = 0
     row.spans.forEach((sp, k) => {
       const end = x + sp.text.length
-      const cuts = [x, ...[lo, hi].filter(v => v > x && v < end), end]
+      const cuts = [x, ...ranges.flat().filter(v => v > x && v < end).sort((p, q) => p - q), end]
       for (let m = 0; m < cuts.length - 1; m++) {
         const a = cuts[m]!
         const b = cuts[m + 1]!
-        const on = lo >= 0 && a >= lo && b <= hi
+        const on = ranges.some(([p, q]) => a >= p && b <= q)
         out.push(
           <Text key={`${k}-${m}`} {...styleOf(sp.style, on)}>
             {sp.text.slice(a - x, b - x)}
@@ -396,7 +426,7 @@ const Doc: ClientModule<DocProps, State> = (p, surface) => {
       x = end
     })
     return (
-      <Text key={key} wrap="truncate-end">
+      <Text key={`r${y}`} wrap="truncate-end">
         {out.length ? out : ' '}
       </Text>
     )
@@ -406,7 +436,7 @@ const Doc: ClientModule<DocProps, State> = (p, surface) => {
     <Box flexDirection="column">
       {drawn.map((row, y) => {
         const r = source(y)
-        return drawRow(row, r < 0 ? -1 : r, `r${y}`)
+        return drawRow(row, r < 0 ? -1 : r, y)
       })}
     </Box>
   )

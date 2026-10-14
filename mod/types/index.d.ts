@@ -6,7 +6,8 @@ export type Doc = { path: string; text: string; changed: string[] }
 export type Note = {
   id: string
   quote: string
-  kind: 'explain' | 'ask' | 'deeper'
+  // A comment is the reader's own words for Claude (in `question`); the rest are answered in the margin.
+  kind: 'explain' | 'ask' | 'deeper' | 'comment'
   question?: string
   answer: string | null
   error?: string
@@ -29,7 +30,8 @@ declare module 'claude-code' {
       sel: Sel | null
       dismissed: string | null
       written: string | null
-      asking: boolean
+      // The band's field is open for a question or a comment.
+      asking: false | 'ask' | 'comment'
     }
   }
 }

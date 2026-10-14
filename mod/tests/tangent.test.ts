@@ -72,13 +72,16 @@ test('a double press selects the word under it', async ($, on) => {
   expect(rows[5]).toMatch(/Explain/)
 })
 
-test('with a Together key, DeepSeek answers', { options: { together_api_key: 'test-key' } }, async ($, on) => {
+test('with a Together key, DeepSeek streams the answer, the key kept out of the arguments', { options: { together_api_key: 'test-key' } }, async ($, on) => {
   stubs(on, 'not this one')
   let sent: any
-  on('http.fetch', (_$: any, e: any) => {
+  on('process.spawn', async function* (_$: any, e: any) {
     sent = e
-    return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ choices: [{ message: { content: 'From DeepSeek.' } }] }) } }
-  })
+    const delta = (t: string) => `data: ${JSON.stringify({ choices: [{ delta: { content: t } }] })}\n`
+    yield { stream: 'stdout', text: delta('From ') }
+    yield { stream: 'stdout', text: delta('DeepSeek.') + 'data: [DONE]\n' }
+    return { value: { code: 0, signal: null } }
+  } as any)
   on('clock.sleep', () => new Promise(() => {}))
   const view = await openPlan($)
   await view.post({ type: 'annotate', kind: 'explain', quote: 's-maxage', parent: null }, { in: 'doc' })
@@ -86,7 +89,52 @@ test('with a Together key, DeepSeek answers', { options: { together_api_key: 'te
   const rows = rowsOf(await view.drawn({ in: 'doc' }))
   expect(rows.join('\n')).toMatch(/From DeepSeek\./)
   expect(rows.join('\n')).toMatch(/deepseek-v4\.1-flash · /)
-  expect(JSON.stringify(sent)).toMatch(/Bearer test-key/)
+  expect(sent.env.TANGENT_TOGETHER_KEY).toBe('test-key')
+  expect(JSON.stringify(sent.argv)).not.toMatch(/test-key/)
+  expect(JSON.parse(sent.input).stream).toBe(true)
+})
+
+test('a comment is kept as written, and only comments go to Claude', async ($, on) => {
+  stubs(on)
+  let filled = ''
+  on('prompt.fill', (_$: any, e: any) => {
+    filled = e.text
+    return { isFilled: true }
+  })
+  const view = await openPlan($)
+  await view.post({ type: 'annotate', kind: 'explain', quote: 's-maxage', parent: null }, { in: 'doc' })
+  let rows = rowsOf(await view.drawn({ in: 'doc' }))
+  const t = rows.findIndex(r => r.includes('ship'))
+  const x = rows[t]!.indexOf('ship')
+  await view.pointer({ type: 'down', x, y: t, button: 'left', in: 'doc' })
+  await view.pointer({ type: 'move', x: x + 3, y: t, button: 'left', in: 'doc' })
+  await view.pointer({ type: 'up', x: x + 3, y: t, button: 'left', in: 'doc' })
+  rows = rowsOf(await view.drawn({ in: 'doc' }))
+  const y = rows.findIndex(r => r.includes('Comment…'))
+  await view.pointer({ type: 'down', x: rows[y]!.indexOf('Comment…'), y, button: 'left', in: 'doc' })
+  for (const key of 'behind a flag') await view.key({ key, in: 'doc' })
+  await view.key({ key: 'return', in: 'doc' })
+
+  rows = rowsOf(await view.drawn({ in: 'doc' }))
+  expect(rows.join('\n')).toMatch(/✎ “ship”/)
+  expect(rows.join('\n')).toMatch(/behind a flag/)
+  expect(await view.find({ key: 'send-all' })).toMatchObject({ props: { label: 'Send 1 comment to Claude' } })
+  await view.press({ key: 'send-all' })
+  expect(filled).toMatch(/On "ship": behind a flag/)
+  expect(filled).not.toMatch(/s-maxage/)
+})
+
+test('an action lights up under the pointer', async ($, on) => {
+  stubs(on)
+  const view = await openPlan($)
+  await view.post({ type: 'annotate', kind: 'explain', quote: 's-maxage', parent: null }, { in: 'doc' })
+  const rows = rowsOf(await view.drawn({ in: 'doc' }))
+  const y = rows.findIndex(r => r.includes('Remove'))
+  const lit = async () => JSON.stringify(await view.drawn({ in: 'doc' })).match(/"inverse":true},"children":\["Remove"\]/)
+  expect(await lit()).toBeNull()
+  await view.pointer({ type: 'move', x: rows[y]!.indexOf('Remove') + 1, y, in: 'doc' })
+  const tree = JSON.stringify(await view.drawn({ in: 'doc' }))
+  expect(await lit(), tree.slice(Math.max(0, tree.indexOf('Remove') - 300), tree.indexOf('Remove') + 100)).not.toBeNull()
 })
 
 test('a selection in the transcript gets its actions in the band', async ($, on) => {
