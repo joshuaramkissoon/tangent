@@ -154,6 +154,31 @@ test('a note folds to one row from its title, and unfolds again', async ($, on) 
   expect(rows.some(r => r.includes('Remove'))).toBe(true)
 })
 
+test('typing /tangent offers the docs Claude wrote this session, then the folder’s', async ($, on) => {
+  stubs(on)
+  on('session.cwd', () => ({ value: '/repo' }) as any)
+  on('env.get', () => ({ value: '/home/me' }) as any)
+  on('fs.list', () => ({
+    value: [
+      { name: 'README.md', kind: 'file', size: 1, mtimeMs: 2, isLink: false },
+      { name: 'plan.html', kind: 'file', size: 1, mtimeMs: 3, isLink: false },
+      { name: 'main.py', kind: 'file', size: 1, mtimeMs: 4, isLink: false },
+      { name: 'docs', kind: 'dir', size: 0, mtimeMs: 5, isLink: false },
+    ],
+  }) as any)
+  on('prompt.autocomplete', () => ({ suggestions: [] }) as any)
+  await $.tool.call({ tool: 'Write', file_path: PATH, content: PLAN } as any)
+
+  const ask = (text: string) =>
+    ($ as any).prompt.autocomplete({ text, cursor: text.length, token: text.split(' ').pop(), start: text.lastIndexOf(' ') + 1 })
+  const all = await ask('/tangent')
+  expect(all.suggestions.map((s: any) => s.text)).toEqual(['/tangent docs/plan.md', '/tangent plan.html', '/tangent README.md'])
+  expect(all.suggestions[0].description).toBe('Claude wrote this session')
+  const some = await ask('/tangent pl')
+  expect(some.suggestions.map((s: any) => s.text)).toEqual(['docs/plan.md', 'plan.html'])
+  expect((await ask('fix the tests')).suggestions).toEqual([])
+})
+
 test('a selection in the transcript gets its actions in the band', async ($, on) => {
   on('command.register', () => ({ value: undefined }) as any)
   on('clock.now', () => ({ value: 1000 }) as any)

@@ -19,6 +19,7 @@ const notes = atom({ plugin: 'tangent', key: 'notes' } as const, [])
 const sel = atom({ plugin: 'tangent', key: 'sel' } as const, null)
 const dismissed = atom({ plugin: 'tangent', key: 'dismissed' } as const, null)
 const written = atom({ plugin: 'tangent', key: 'written' } as const, null)
+const made = atom({ plugin: 'tangent', key: 'made' } as const, [] as string[])
 const asking = atom({ plugin: 'tangent', key: 'asking' } as const, false as false | 'ask' | 'comment')
 
 const SYSTEM = `You are Tangent, a reading companion that answers in the margin of what someone is reading.
@@ -281,6 +282,7 @@ export const register: Register = (on, options) => {
       await update($, doc, () => null)
       await update($, notes, () => [])
       await update($, written, () => null)
+      await update($, made, () => [])
       await update($, sel, () => null)
       await update($, asking, () => false as const)
     }
@@ -306,6 +308,34 @@ export const register: Register = (on, options) => {
     return { text: `Opened ${nameOf(path)} in Tangent.` }
   })
 
+  // Typing /tangent offers docs to open: the ones Claude wrote this session first, then the folder's own.
+  // The engine asks only for a word being typed, so the rows come while /tangent itself is typed
+  // (taking one writes the whole command) or once the path has begun.
+  on('prompt.autocomplete', async ($, e, next) => {
+    const base = await next(e)
+    const typed = /^\/tangent(?:\s+(\S*))?$/.exec(e.text.slice(0, e.cursor))
+    if (!typed) return base
+    const onCommand = typed[1] === undefined
+    const part = (typed[1] ?? '').toLowerCase()
+    const cwd: string = await $.session.cwd()
+    const home = (await $.env.get('HOME')) ?? ''
+    const shown = (p: string) => (p.startsWith(cwd + '/') ? p.slice(cwd.length + 1) : home && p.startsWith(home + '/') ? '~' + p.slice(home.length) : p)
+
+    const rows = new Map<string, string>()
+    for (const p of (await read($, made)) as string[]) rows.set(p, 'Claude wrote this session')
+    const here = (await $.fs.list(cwd).catch(() => [])) as { name: string; kind: string; mtimeMs: number }[]
+    for (const f of [...here].filter(f => f.kind === 'file' && (MD.test(f.name) || HTML.test(f.name))).sort((a, b) => b.mtimeMs - a.mtimeMs)) {
+      const p = `${cwd}/${f.name}`
+      if (!rows.has(p)) rows.set(p, 'in this folder')
+    }
+    const mine = [...rows]
+      .map(([p, description]) => ({ path: shown(p), description }))
+      .filter(r => !part || r.path.toLowerCase().includes(part))
+      .slice(0, 10)
+      .map(r => ({ text: onCommand ? `/tangent ${r.path}` : r.path, label: r.path, description: r.description }))
+    return { suggestions: [...base.suggestions, ...mine] }
+  })
+
   // When Claude writes a markdown file or an HTML page, offer to open it; when it edits the open one, refresh it.
   on('tool.call', async ($, e, next) => {
     const ran = await next(e)
@@ -313,6 +343,7 @@ export const register: Register = (on, options) => {
     const path = (e as any).file_path as string | undefined
     if (!path || !(MD.test(path) || HTML.test(path)) || !['Write', 'Edit', 'MultiEdit'].includes(tool)) return ran
     if (ran.deny !== undefined || ran.isError) return ran
+    await update($, made, l => [path, ...l.filter(p => p !== path)].slice(0, 20))
     const d: Doc | null = await read($, doc)
     if (d && d.path === path) {
       const text = await readDoc($, path)

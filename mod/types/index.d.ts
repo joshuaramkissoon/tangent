@@ -32,6 +32,8 @@ declare module 'claude-code' {
       sel: Sel | null
       dismissed: string | null
       written: string | null
+      // Docs Claude wrote or edited this session, newest first: what /tangent offers first.
+      made: string[]
       // The band's field is open for a question or a comment.
       asking: false | 'ask' | 'comment'
     }
