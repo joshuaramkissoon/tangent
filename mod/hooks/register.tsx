@@ -2,11 +2,13 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Doc, DocProps, Note, Sel } from '../types'
+import { htmlToMarkdown } from './html'
 
 const PANE = 'tangent'
 const MODEL = 'haiku'
 const TOGETHER = 'https://api.together.xyz/v1/chat/completions'
 const MD = /\.(md|markdown)$/i
+const HTML = /\.html?$/i
 // The selection API keeps the last selection after a click elsewhere, so the actions retire on their own.
 const SELECTION_TTL_MS = 15_000
 // Past this the doc is drawn by the engine's Markdown (no in-pane selection): a Client's props are bounded.
@@ -101,8 +103,14 @@ function actionStrip($: any, ui: any, s: Sel, open: false | 'ask' | 'comment') {
   )
 }
 
+// An HTML page is read as the markdown it amounts to: the pane draws text, not pages.
+const readDoc = async ($: any, path: string): Promise<string> => {
+  const raw: string = await $.fs.read(path)
+  return HTML.test(path) ? htmlToMarkdown(raw) : raw
+}
+
 async function openDoc($: any, path: string) {
-  const text = await $.fs.read(path)
+  const text = await readDoc($, path)
   await update($, doc, () => ({ path, text, changed: [] }))
   await update($, written, () => null)
   await $.ui.open({ id: PANE, title: `Tangent · ${nameOf(path)}` })
@@ -245,8 +253,8 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'tangent',
-      description: 'Open a markdown file (or the last one Claude wrote) in the Tangent pane',
-      argumentHint: '[file.md]',
+      description: 'Open a markdown file or HTML page (or the last one Claude wrote) in the Tangent pane',
+      argumentHint: '[file.md | page.html]',
     })
     // There is no selection event, so the transcript's selection is read a few times a second.
     $.clock.every(400, async () => {
@@ -293,16 +301,16 @@ export const register: Register = (on, options) => {
     return { text: `Opened ${nameOf(path)} in Tangent.` }
   })
 
-  // When Claude writes a markdown file, offer to open it; when it edits the open one, refresh it.
+  // When Claude writes a markdown file or an HTML page, offer to open it; when it edits the open one, refresh it.
   on('tool.call', async ($, e, next) => {
     const ran = await next(e)
     const tool = String(e.tool)
     const path = (e as any).file_path as string | undefined
-    if (!path || !MD.test(path) || !['Write', 'Edit', 'MultiEdit'].includes(tool)) return ran
+    if (!path || !(MD.test(path) || HTML.test(path)) || !['Write', 'Edit', 'MultiEdit'].includes(tool)) return ran
     if (ran.deny !== undefined || ran.isError) return ran
     const d: Doc | null = await read($, doc)
     if (d && d.path === path) {
-      const text = await $.fs.read(path)
+      const text = await readDoc($, path)
       const before = new Set(blocksOf(d.text))
       await update($, doc, () => ({ path, text, changed: blocksOf(text).filter(b => !before.has(b)) }))
     } else {
@@ -364,7 +372,15 @@ export const register: Register = (on, options) => {
         <Box gap={1}>
           <Text bold>{d ? nameOf(d.path) : 'Tangent'}</Text>
           {comments > 0 && <Button key="send-all" label={`Send ${comments} comment${comments > 1 ? 's' : ''} to Claude`} onPress={() => sendToClaude($)} />}
-          {d && <Button key="open-web" label="Open in Tangent ↗" onPress={() => $.process.run(['tangent', d.path])} />}
+          {/* Tangent reads markdown, so a page goes to it as the text the pane shows; the page itself opens in the browser. */}
+          {d && (
+            <Button
+              key="open-web"
+              label="Open in Tangent ↗"
+              onPress={() => (HTML.test(d.path) ? $.process.run(['tangent', '-'], { stdin: d.text }) : $.process.run(['tangent', d.path]))}
+            />
+          )}
+          {d && HTML.test(d.path) && <Button key="open-page" label="Open page ↗" plain onPress={() => $.process.run(['open', d.path])} />}
           {list.length > 0 && (
             <Button
               key="fold-all"
