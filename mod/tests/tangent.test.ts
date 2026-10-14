@@ -189,6 +189,20 @@ test('typing /tangent offers the docs Claude wrote this session, then the folder
   expect(await view.find({ key: 'pick-/repo/plan.html' })).toBeUndefined()
 })
 
+test('after a /clear, /tangent is registered again', async ($, on) => {
+  const registered: string[] = []
+  on('command.register', (_$: any, e: any) => {
+    registered.push(e.name)
+    return { value: { command: e.name } }
+  })
+  on('clock.every', () => ({ deny: 'not in this test' }) as any)
+  on('session.start', (_$, e: any) => ({ cwd: e.cwd }) as any)
+  on('classic.SessionStart', () => ({}) as any)
+  await ($ as any).session.start({ cwd: '/repo', source: 'startup' })
+  await ($ as any).classic.SessionStart({ source: 'clear' })
+  expect(registered).toEqual(['tangent', 'tangent'])
+})
+
 test('a selection in the transcript gets its actions in the band', async ($, on) => {
   on('command.register', () => ({ value: undefined }) as any)
   on('clock.now', () => ({ value: 1000 }) as any)

@@ -276,13 +276,31 @@ export const register: Register = (on, options) => {
   opts = (options ?? {}) as Options
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({
-      name: 'tangent',
-      description: 'Open a markdown file or HTML page (or the last one Claude wrote) in the Tangent pane',
-      argumentHint: '[file.md | page.html]',
-    })
-    // There is no selection event, so the transcript's selection is read a few times a second.
-    $.clock.every(400, async () => {
+    await setUp($)
+    return next(e)
+  })
+
+  // A /clear goes on as a new session without a session.start, and the command is the old session's:
+  // the classic SessionStart hook does fire, with source 'clear', so it's set up again there.
+  on('classic.SessionStart', async ($, e: any, next) => {
+    if (e.source === 'clear') await setUp($)
+    return next(e)
+  })
+
+  hooks(on)
+}
+
+let tick: { cancel: () => void } | undefined
+
+async function setUp($: any) {
+  await $.command.register({
+    name: 'tangent',
+    description: 'Open a markdown file or HTML page in the Tangent pane, or pick one',
+    argumentHint: '[file.md | page.html]',
+  })
+  // There is no selection event, so the transcript's selection is read a few times a second (one timer at a time).
+  tick?.cancel()
+  tick = $.clock.every(400, async () => {
       const s = await $.ui.selection()
       const text = s?.text.trim() ?? ''
       const now = await $.clock.now()
@@ -296,9 +314,10 @@ export const register: Register = (on, options) => {
       seenAt = now
       await update($, sel, () => (text && text.length <= 4000 ? { text, requestId: s?.requestId } : null))
       if (!text) await update($, asking, () => false as const)
-    })
-    return next(e)
   })
+}
+
+function hooks(on: Parameters<Register>[0]) {
 
   // A /clear starts the pane over too: no doc, no notes, no offer to read the last file.
   on('session.end', async ($, e, next) => {
