@@ -55,7 +55,7 @@ test('dragging over words in the pane puts the actions on the row under them, an
   rows = rowsOf(await view.drawn({ in: 'doc' }))
   expect(rows.join('\n')).toMatch(/Explain “s-maxage”/)
   expect(rows.join('\n')).toMatch(/shared caches/)
-  expect(rows.join('\n')).toMatch(/haiku · /)
+  expect(rows.join('\n')).not.toMatch(/haiku/)
   expect(rows.some(r => /Explain.*Deeper/.test(r))).toBe(false)
 })
 
@@ -88,7 +88,6 @@ test('with a Together key, DeepSeek streams the answer, the key kept out of the 
   await new Promise(r => setTimeout(r, 50))
   const rows = rowsOf(await view.drawn({ in: 'doc' }))
   expect(rows.join('\n')).toMatch(/From DeepSeek\./)
-  expect(rows.join('\n')).toMatch(/deepseek-v4\.1-flash · /)
   expect(sent.env.TANGENT_TOGETHER_KEY).toBe('test-key')
   expect(JSON.stringify(sent.argv)).not.toMatch(/test-key/)
   expect(JSON.parse(sent.input).stream).toBe(true)
@@ -112,7 +111,7 @@ test('a comment is kept as written, and only comments go to Claude', async ($, o
   rows = rowsOf(await view.drawn({ in: 'doc' }))
   const y = rows.findIndex(r => r.includes('Comment…'))
   await view.pointer({ type: 'down', x: rows[y]!.indexOf('Comment…'), y, button: 'left', in: 'doc' })
-  for (const key of 'behind a flag') await view.key({ key, in: 'doc' })
+  for (const ch of 'behind a flag') await view.key({ key: ch === ' ' ? 'space' : ch, in: 'doc' })
   await view.key({ key: 'return', in: 'doc' })
 
   rows = rowsOf(await view.drawn({ in: 'doc' }))
@@ -135,6 +134,24 @@ test('an action lights up under the pointer', async ($, on) => {
   await view.pointer({ type: 'move', x: rows[y]!.indexOf('Remove') + 1, y, in: 'doc' })
   const tree = JSON.stringify(await view.drawn({ in: 'doc' }))
   expect(await lit(), tree.slice(Math.max(0, tree.indexOf('Remove') - 300), tree.indexOf('Remove') + 100)).not.toBeNull()
+})
+
+test('a note folds to one row from its title, and unfolds again', async ($, on) => {
+  stubs(on)
+  const view = await openPlan($)
+  await view.post({ type: 'annotate', kind: 'explain', quote: 's-maxage', parent: null }, { in: 'doc' })
+  const press = async () => {
+    const rows = rowsOf(await view.drawn({ in: 'doc' }))
+    const y = rows.findIndex(r => r.includes('Explain “s-maxage”'))
+    await view.pointer({ type: 'down', x: rows[y]!.indexOf('Explain'), y, button: 'left', in: 'doc' })
+    return rowsOf(await view.drawn({ in: 'doc' }))
+  }
+  let rows = await press()
+  expect(rows.find(r => r.includes('▸ › Explain'))).toMatch(/It tells shared/)
+  expect(rows.some(r => r.includes('Remove'))).toBe(false)
+  rows = await press()
+  expect(rows.some(r => r.includes('▾ › Explain'))).toBe(true)
+  expect(rows.some(r => r.includes('Remove'))).toBe(true)
 })
 
 test('a selection in the transcript gets its actions in the band', async ($, on) => {

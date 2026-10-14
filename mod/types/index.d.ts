@@ -15,6 +15,8 @@ export type Note = {
   // Which model answered, and how long it took.
   via?: string
   ms?: number
+  // Folded to its title row in the pane.
+  collapsed?: boolean
 }
 
 export type Sel = { text: string; requestId?: string }

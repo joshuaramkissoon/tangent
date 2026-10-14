@@ -344,6 +344,7 @@ export const register: Register = (on, options) => {
       if (n) await sendToClaude($, n)
     }
     if (m.type === 'remove' && m.id) await update($, notes, l => l.filter(x => x.id !== m.id && x.parent !== m.id))
+    if (m.type === 'toggle' && m.id) await update($, notes, l => l.map(x => (x.id === m.id ? { ...x, collapsed: !x.collapsed } : x)))
     return {}
   })
 
@@ -364,6 +365,18 @@ export const register: Register = (on, options) => {
           <Text bold>{d ? nameOf(d.path) : 'Tangent'}</Text>
           {comments > 0 && <Button key="send-all" label={`Send ${comments} comment${comments > 1 ? 's' : ''} to Claude`} onPress={() => sendToClaude($)} />}
           {d && <Button key="open-web" label="Open in Tangent ↗" onPress={() => $.process.run(['tangent', d.path])} />}
+          {list.length > 0 && (
+            <Button
+              key="fold-all"
+              label={list.some(n => !n.collapsed) ? 'Fold all' : 'Unfold all'}
+              plain
+              dimColor
+              onPress={() => update($, notes, l => {
+                const fold = l.some(n => !n.collapsed)
+                return l.map(n => ({ ...n, collapsed: fold }))
+              })}
+            />
+          )}
           {list.length > 0 && <Button key="clear" label="Clear notes" plain dimColor onPress={() => update($, notes, () => [])} />}
         </Box>
         <Box marginTop={1} flexDirection="column">

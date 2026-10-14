@@ -202,9 +202,26 @@ function noteRows(n: Note, all: Note[], width: number, depth: number): Row[] {
   const outer = Math.max(24, width - pad.text.length)
   const inner = outer - 4
   const kind = isComment ? '✎ Comment' : n.kind === 'ask' ? '? Ask' : n.kind === 'deeper' ? '↓ Deeper' : '› Explain'
-  const title = [plain(` ${kind} `, { bold: true }), plain(`“${short(n.quote, Math.max(8, inner - kind.length - 8))}” `, { dim: true })]
-  const top = [pad, edge('╭─'), ...title]
-  const rows: Row[] = [rowOf([...top, edge('─'.repeat(Math.max(1, outer - len(top) + pad.text.length - 1)) + '╮')], 9999, n.id)]
+  const kids = all.filter(x => x.parent === n.id)
+  // The title folds and unfolds the card.
+  const title = [plain(` ${n.collapsed ? '▸' : '▾'} ${kind} `, { bold: true }), plain(`“${short(n.quote, Math.max(8, Math.floor(inner / 2) - kind.length))}”`, { dim: true })]
+  const toggle = (x0: number): Hit => ({ x0, x1: x0 + len(title), post: { type: 'toggle', id: n.id } })
+
+  // Folded: one row, the start of the answer (and how many notes hang off it) dimmed after the title.
+  if (n.collapsed) {
+    const head = [pad, edge('╶─'), ...title]
+    const more = kids.length ? ` +${kids.length}` : ''
+    const room = outer - (len(head) - pad.text.length) - more.length - 5
+    const said = (isComment ? n.question : n.answer) ?? n.error ?? ''
+    const preview = room > 6 && said ? ` ${short(said, room)}` : ''
+    const fill = Math.max(1, outer - (len(head) - pad.text.length) - preview.length - more.length - 1)
+    return [{ ...rowOf([...head, plain(preview, { dim: true }), plain(more, { dim: true }), edge(' ' + '─'.repeat(fill - 1) + '╴')], 9999, n.id), hits: [toggle(len(head) - len(title))] }]
+  }
+
+  const top = [pad, edge('╭─'), ...title, plain(' ')]
+  const rows: Row[] = [
+    { ...rowOf([...top, edge('─'.repeat(Math.max(1, outer - len(top) + pad.text.length - 1)) + '╮')], 9999, n.id), hits: [toggle(pad.text.length + 2)] },
+  ]
 
   // Each row of the answer between the side borders, padded out so the right border lines up.
   const inside = (r: Row): Row => {
@@ -238,11 +255,10 @@ function noteRows(n: Note, all: Note[], width: number, depth: number): Row[] {
     hits.push({ x0: len(bottom), x1: len(bottom) + label.length, post })
     bottom.push(plain(label, { underline: true }), plain(' '), edge('─'))
   }
-  const meta = n.via ? ` ${n.via} · ${((n.ms ?? 0) / 1000).toFixed(1)}s ` : ''
-  const fill = Math.max(1, outer - (len(bottom) - pad.text.length) - meta.length - 2)
-  bottom.push(edge('─'.repeat(fill)), plain(meta, { dim: true }), edge('─╯'))
+  const fill = Math.max(1, outer - (len(bottom) - pad.text.length) - 2)
+  bottom.push(edge('─'.repeat(fill)), edge('─╯'))
   rows.push({ ...rowOf(bottom, 9999, n.id), hits })
-  for (const k of all.filter(x => x.parent === n.id)) rows.push(...noteRows(k, all, width, depth + 1))
+  for (const k of kids) rows.push(...noteRows(k, all, width, depth + 1))
   return rows
 }
 
@@ -303,7 +319,10 @@ function selectedText(rows: Row[], [a, b]: [At, At]): string {
   return out.replace(/[ \t]+\n/g, '\n').trim()
 }
 
-const isWord = (ch: string | undefined) => !!ch && /[\p{L}\p{N}_'’-]/u.test(ch)
+// Keys that arrive by name rather than as the characters they type.
+const NAMED = new Set(['up', 'down', 'left', 'right', 'return', 'tab', 'backspace', 'delete', 'pageup', 'pagedown', 'home', 'end', 'escape', 'insert'])
+
+const isWord =(ch: string | undefined) => !!ch && /[\p{L}\p{N}_'’-]/u.test(ch)
 
 const Doc: ClientModule<DocProps, State> = (p, surface) => {
   const { Box, Text } = surface.elements
@@ -419,7 +438,10 @@ const Doc: ClientModule<DocProps, State> = (p, surface) => {
     }
     if (e.key === 'return') return submit()
     if (e.key === 'backspace' || e.key === 'delete') return surface.setState({ ...s, draft: s.draft.slice(0, -1) })
-    if (e.key.length === 1 && !e.ctrl && !e.meta) return surface.setState({ ...s, draft: s.draft + e.key })
+    if (e.ctrl || e.meta) return
+    // Space comes by name; a paste may come as one key of several characters.
+    const typed = e.key === 'space' ? ' ' : e.key.length === 1 || !(NAMED.has(e.key) || /^f\d+$/.test(e.key)) ? e.key : ''
+    if (typed) return surface.setState({ ...s, draft: s.draft + typed })
   })
 
   const styleOf = (st: Style, on: boolean) => ({
