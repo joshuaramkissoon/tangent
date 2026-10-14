@@ -22,9 +22,15 @@ const asking = atom({ plugin: 'tangent', key: 'asking' } as const, false as fals
 const SYSTEM = `You are Tangent, a reading companion that answers in the margin of what someone is reading.
 Answer the reader directly, in plain words, with no preamble and no headings.
 Ground the answer in the context given; when the context doesn't settle it, say what is generally true and that the text doesn't say.
-explain: 2-4 sentences on what the selected words mean here and why they matter.
-deeper: two short paragraphs that go a level further than an explanation would: the mechanism, the trade-off, or what follows from it.
-ask: answer the reader's question about the selected words in a few sentences.`
+Do only the one task asked, once.`
+
+// One plain instruction per note: a list of modes in the system prompt had DeepSeek answer every mode in turn.
+const TASK = {
+  explain: (q: string) => `In 2-4 sentences, explain what "${q}" means here and why it matters.`,
+  deeper: (q: string) =>
+    `In two short paragraphs, go a level deeper on "${q}" than an explanation would: the mechanism, the trade-off, or what follows from it.`,
+  ask: (q: string, question = '') => `About "${q}", the reader asks: ${question}\nAnswer in a few sentences.`,
+}
 
 // Markdown as typed and text as drawn differ by their marks, so both are compared bare.
 const bare = (s: string) =>
@@ -206,7 +212,7 @@ async function annotate($: any, kind: Note['kind'], quote: string, question?: st
   // A comment is for Claude, not the model: it's kept as written.
   if (kind === 'comment') return
 
-  const ask = `${kind === 'ask' ? `ask: ${question}` : kind}\n\nThe selected words: "${quote}"`
+  const ask = TASK[kind](quote, question)
   const started = await $.clock.now()
   // The answer is drawn as it streams, a few times a second at most.
   let drawn = 0

@@ -53,7 +53,7 @@ test('dragging over words in the pane puts the actions on the row under them, an
 
   await view.pointer({ type: 'down', x: rows[3]!.indexOf('Explain'), y: 3, button: 'left', in: 'doc' })
   rows = rowsOf(await view.drawn({ in: 'doc' }))
-  expect(rows.join('\n')).toMatch(/› “s-maxage”/)
+  expect(rows.join('\n')).toMatch(/Explain “s-maxage”/)
   expect(rows.join('\n')).toMatch(/shared caches/)
   expect(rows.join('\n')).toMatch(/haiku · /)
   expect(rows.some(r => /Explain.*Deeper/.test(r))).toBe(false)
@@ -116,7 +116,7 @@ test('a comment is kept as written, and only comments go to Claude', async ($, o
   await view.key({ key: 'return', in: 'doc' })
 
   rows = rowsOf(await view.drawn({ in: 'doc' }))
-  expect(rows.join('\n')).toMatch(/✎ “ship”/)
+  expect(rows.join('\n')).toMatch(/Comment “ship”/)
   expect(rows.join('\n')).toMatch(/behind a flag/)
   expect(await view.find({ key: 'send-all' })).toMatchObject({ props: { label: 'Send 1 comment to Claude' } })
   await view.press({ key: 'send-all' })

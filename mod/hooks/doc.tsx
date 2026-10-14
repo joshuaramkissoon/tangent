@@ -10,7 +10,8 @@ type Span = { text: string; style: Style }
 type Hit = { x0: number; x1: number; post: JsonValue | 'ask' | 'comment' | 'submit' | 'cancel' | 'hide' }
 // One drawn row: its spans, where its selectable text starts, the note it belongs to, and whether
 // it carries on a wrapped line (so a selection over it joins with a space, not a newline).
-type Row = { spans: Span[]; text: string; from: number; note?: string; soft?: boolean; hits?: Hit[] }
+// `end`, where set, is where its selectable text stops (a note card's right border follows).
+type Row = { spans: Span[]; text: string; from: number; end?: number; note?: string; soft?: boolean; hits?: Hit[] }
 
 type At = { r: number; c: number }
 // The selection (anchor and focus), the field open for a question or a comment, and the action under
@@ -189,33 +190,58 @@ function unitRows(src: string, width: number, gutter: Span[], note?: string): Ro
   return wrap(inline(lines.join(' ')), width, g, g, note)
 }
 
-// A note in the margin: the words it's about, the answer, and what can be done with it.
+const len = (spans: Span[]) => spans.reduce((k, s) => k + s.text.length, 0)
+
+// A note is a card set apart from the doc: its kind and words in the top border, the answer inside,
+// and what can be done with it in the bottom border. Notes on a note follow as cards indented under it.
 function noteRows(n: Note, all: Note[], width: number, depth: number): Row[] {
   const isComment = n.kind === 'comment'
   // A comment is drawn in the accent colour that marks what goes to Claude.
-  const g = [plain('  '.repeat(depth + 1)), plain('┃ ', { color: isComment ? 'claude' : 'magenta' })]
-  const mark = isComment ? '✎' : n.kind === 'ask' ? '?' : n.kind === 'deeper' ? '↓' : '›'
-  const asked = n.kind === 'ask' && n.question ? ` — ${n.question}` : ''
-  const rows: Row[] = [rowOf([...g, plain(`${mark} “${short(n.quote, Math.max(10, width - 30))}”${asked}`, { dim: true })], 9999, n.id)]
-  const body = isComment ? n.question : n.answer
-  if (body) {
-    for (const b of blocksOf(body)) for (const u of unitsOf(b)) rows.push(...unitRows(u, width, g, n.id))
-  } else rows.push(rowOf([...g, plain(n.error ?? 'thinking…', { dim: true, italic: true })], 9999, n.id))
+  const edge = (s: string): Span => plain(s, { color: isComment ? 'claude' : 'magenta' })
+  const pad = plain('  '.repeat(depth + 1))
+  const outer = Math.max(24, width - pad.text.length)
+  const inner = outer - 4
+  const kind = isComment ? '✎ Comment' : n.kind === 'ask' ? '? Ask' : n.kind === 'deeper' ? '↓ Deeper' : '› Explain'
+  const title = [plain(` ${kind} `, { bold: true }), plain(`“${short(n.quote, Math.max(8, inner - kind.length - 8))}” `, { dim: true })]
+  const top = [pad, edge('╭─'), ...title]
+  const rows: Row[] = [rowOf([...top, edge('─'.repeat(Math.max(1, outer - len(top) + pad.text.length - 1)) + '╮')], 9999, n.id)]
+
+  // Each row of the answer between the side borders, padded out so the right border lines up.
+  const inside = (r: Row): Row => {
+    const lead = [pad, edge('│ ')]
+    const body = len(lead)
+    return {
+      ...rowOf([...lead, ...r.spans, plain(' '.repeat(Math.max(0, inner - r.text.length))), edge(' │')], body + Math.min(r.from, inner), n.id, r.soft),
+      end: body + r.text.length,
+    }
+  }
+  if (n.kind === 'ask' && n.question) {
+    for (const r of wrap([plain(n.question, { italic: true, dim: true })], inner, [], [])) rows.push({ ...inside(r), from: 9999 })
+    rows.push({ ...inside(rowOf([], 0)), from: 9999 })
+  }
+  const text = isComment ? n.question : n.answer
+  if (text) {
+    blocksOf(text).forEach((b, k) => {
+      if (k > 0) rows.push({ ...inside(rowOf([], 0)), from: 9999 })
+      for (const u of unitsOf(b)) for (const r of unitRows(u, inner, [])) rows.push(inside(r))
+    })
+  } else rows.push({ ...inside(rowOf([plain(n.error ?? 'thinking…', { dim: true, italic: true })], 0)), from: 9999 })
+
   // Only a comment can go to Claude; an answer is the reader's.
-  const pre = g.reduce((k, s) => k + s.text.length, 0)
   const actions: [string, JsonValue][] = isComment
     ? [['Send to Claude', { type: 'send', id: n.id }], ['Remove', { type: 'remove', id: n.id }]]
     : [['Remove', { type: 'remove', id: n.id }]]
-  const spans: Span[] = [...g]
+  const bottom: Span[] = [pad, edge('╰─')]
   const hits: Hit[] = []
-  let x = pre
   for (const [label, post] of actions) {
-    spans.push(plain(label, { underline: true }), plain('  '))
-    hits.push({ x0: x, x1: x + label.length, post })
-    x += label.length + 2
+    bottom.push(plain(' '))
+    hits.push({ x0: len(bottom), x1: len(bottom) + label.length, post })
+    bottom.push(plain(label, { underline: true }), plain(' '), edge('─'))
   }
-  if (n.via) spans.push(plain(` ${n.via} · ${((n.ms ?? 0) / 1000).toFixed(1)}s`, { dim: true }))
-  rows.push({ ...rowOf(spans, 9999, n.id), hits })
+  const meta = n.via ? ` ${n.via} · ${((n.ms ?? 0) / 1000).toFixed(1)}s ` : ''
+  const fill = Math.max(1, outer - (len(bottom) - pad.text.length) - meta.length - 2)
+  bottom.push(edge('─'.repeat(fill)), plain(meta, { dim: true }), edge('─╯'))
+  rows.push({ ...rowOf(bottom, 9999, n.id), hits })
   for (const k of all.filter(x => x.parent === n.id)) rows.push(...noteRows(k, all, width, depth + 1))
   return rows
 }
@@ -244,7 +270,11 @@ function layout(p: DocProps, width: number): Row[] {
     if (changed.has(b)) rows.push(rowOf([plain('✎ updated', { color: 'green' })], 9999))
     units[i]!.forEach((u, j) => {
       rows.push(...unitRows(u, width, []))
-      for (const n of placed.get(`${i}:${j}`) ?? []) rows.push(...noteRows(n, p.notes, width, 0))
+      const here = placed.get(`${i}:${j}`) ?? []
+      // A line of space either side of the cards; the blank between blocks serves after the last item.
+      if (here.length) rows.push(rowOf([], 0))
+      for (const n of here) rows.push(...noteRows(n, p.notes, width, 0))
+      if (here.length && j < units[i]!.length - 1) rows.push(rowOf([], 0))
     })
   })
   if (loose.length) {
@@ -265,7 +295,7 @@ function selectedText(rows: Row[], [a, b]: [At, At]): string {
     const row = rows[r]
     if (!row) continue
     const from = Math.max(row.from, r === a.r ? a.c : 0)
-    const to = r === b.r ? b.c + 1 : row.text.length
+    const to = Math.min(row.end ?? row.text.length, r === b.r ? b.c + 1 : row.text.length)
     const piece = row.text.slice(from, to)
     if (r > a.r) out += row.soft ? ' ' : '\n'
     out += piece
@@ -368,7 +398,7 @@ const Doc: ClientModule<DocProps, State> = (p, surface) => {
       if (r < 0) r = at - 1
       r = Math.max(0, Math.min(rows.length - 1, r))
       const row = rows[r]!
-      const c = Math.max(row.from, Math.min(Math.max(row.from, row.text.length - 1), e.x))
+      const c = Math.max(row.from, Math.min(Math.max(row.from, (row.end ?? row.text.length) - 1), e.x))
       if (s.f && s.f.r === r && s.f.c === c) return
       return surface.setState({ ...s, f: { r, c } })
     }
