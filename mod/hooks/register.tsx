@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Doc, DocProps, Note, Sel } from '../types'
+import type { Choice, Doc, DocProps, Note, Sel } from '../types'
 import { htmlToMarkdown } from './html'
 
 const PANE = 'tangent'
@@ -20,6 +20,7 @@ const sel = atom({ plugin: 'tangent', key: 'sel' } as const, null)
 const dismissed = atom({ plugin: 'tangent', key: 'dismissed' } as const, null)
 const written = atom({ plugin: 'tangent', key: 'written' } as const, null)
 const made = atom({ plugin: 'tangent', key: 'made' } as const, [] as string[])
+const choices = atom({ plugin: 'tangent', key: 'choices' } as const, null as Choice[] | null)
 const asking = atom({ plugin: 'tangent', key: 'asking' } as const, false as false | 'ask' | 'comment')
 
 const SYSTEM = `You are Tangent, a reading companion that answers in the margin of what someone is reading.
@@ -110,7 +111,30 @@ const readDoc = async ($: any, path: string): Promise<string> => {
   return HTML.test(path) ? htmlToMarkdown(raw) : raw
 }
 
+// The docs to offer: the ones Claude wrote this session, newest first, then the folder's markdown and pages.
+// Labelled as typed at the prompt: relative to the folder, or from ~.
+async function docChoices($: any): Promise<Choice[]> {
+  const cwd: string = await $.session.cwd()
+  const home = (await $.env.get('HOME')) ?? ''
+  const label = (p: string) => (p.startsWith(cwd + '/') ? p.slice(cwd.length + 1) : home && p.startsWith(home + '/') ? '~' + p.slice(home.length) : p)
+  const out = new Map<string, string>()
+  for (const p of (await read($, made)) as string[]) out.set(p, 'Claude wrote this session')
+  const here = (await $.fs.list(cwd).catch(() => [])) as { name: string; kind: string; mtimeMs: number }[]
+  for (const f of [...here].filter(f => f.kind === 'file' && (MD.test(f.name) || HTML.test(f.name))).sort((a, b) => b.mtimeMs - a.mtimeMs)) {
+    const p = `${cwd}/${f.name}`
+    if (!out.has(p)) out.set(p, 'in this folder')
+  }
+  return [...out].map(([path, note]) => ({ path, label: label(path), note }))
+}
+
+async function showChoices($: any) {
+  const list = await docChoices($)
+  await update($, choices, () => list)
+  await $.ui.open({ id: PANE, title: 'Tangent' })
+}
+
 async function openDoc($: any, path: string) {
+  await update($, choices, () => null)
   const text = await readDoc($, path)
   await update($, doc, () => ({ path, text, changed: [] }))
   await update($, written, () => null)
@@ -283,6 +307,7 @@ export const register: Register = (on, options) => {
       await update($, notes, () => [])
       await update($, written, () => null)
       await update($, made, () => [])
+      await update($, choices, () => null)
       await update($, sel, () => null)
       await update($, asking, () => false as const)
     }
@@ -298,41 +323,28 @@ export const register: Register = (on, options) => {
         : arg === '~' || arg.startsWith('~/')
           ? `${(await $.env.get('HOME')) ?? ''}${arg.slice(1)}`
           : `${await $.session.cwd()}/${arg}`
-      : (await read($, written)) ?? (await read($, doc))?.path ?? null
+      : null
+    // No path: the pane offers the docs to pick from.
     if (!path) {
-      await $.ui.open({ id: PANE, title: 'Tangent' })
-      return { text: 'Tangent pane opened. Select any text to explain it.' }
+      await showChoices($)
+      return { text: 'Pick a doc in the Tangent pane.' }
     }
     if (!(await $.fs.exists(path))) return { text: `No file at ${path}.` }
     await openDoc($, path)
     return { text: `Opened ${nameOf(path)} in Tangent.` }
   })
 
-  // Typing /tangent offers docs to open: the ones Claude wrote this session first, then the folder's own.
-  // The engine asks only for a word being typed, so the rows come while /tangent itself is typed
-  // (taking one writes the whole command) or once the path has begun.
+  // Once a path is begun after /tangent, the typeahead offers the same docs by name. Not on the command
+  // word itself: there the rows would sit among every other command's.
   on('prompt.autocomplete', async ($, e, next) => {
     const base = await next(e)
-    const typed = /^\/tangent(?:\s+(\S*))?$/.exec(e.text.slice(0, e.cursor))
+    const typed = /^\/tangent\s+(\S+)$/.exec(e.text.slice(0, e.cursor))
     if (!typed) return base
-    const onCommand = typed[1] === undefined
-    const part = (typed[1] ?? '').toLowerCase()
-    const cwd: string = await $.session.cwd()
-    const home = (await $.env.get('HOME')) ?? ''
-    const shown = (p: string) => (p.startsWith(cwd + '/') ? p.slice(cwd.length + 1) : home && p.startsWith(home + '/') ? '~' + p.slice(home.length) : p)
-
-    const rows = new Map<string, string>()
-    for (const p of (await read($, made)) as string[]) rows.set(p, 'Claude wrote this session')
-    const here = (await $.fs.list(cwd).catch(() => [])) as { name: string; kind: string; mtimeMs: number }[]
-    for (const f of [...here].filter(f => f.kind === 'file' && (MD.test(f.name) || HTML.test(f.name))).sort((a, b) => b.mtimeMs - a.mtimeMs)) {
-      const p = `${cwd}/${f.name}`
-      if (!rows.has(p)) rows.set(p, 'in this folder')
-    }
-    const mine = [...rows]
-      .map(([p, description]) => ({ path: shown(p), description }))
-      .filter(r => !part || r.path.toLowerCase().includes(part))
-      .slice(0, 10)
-      .map(r => ({ text: onCommand ? `/tangent ${r.path}` : r.path, label: r.path, description: r.description }))
+    const part = typed[1]!.toLowerCase()
+    const mine = (await docChoices($))
+      .filter(c => c.label.toLowerCase().includes(part))
+      .slice(0, 8)
+      .map(c => ({ text: c.label, label: nameOf(c.path), description: c.note }))
     return { suggestions: [...base.suggestions, ...mine] }
   })
 
@@ -402,6 +414,11 @@ export const register: Register = (on, options) => {
     const props: DocProps = { text: d?.text ?? '', notes: list, changed: d?.changed ?? [], columns }
     // Surfaces without a Client, and docs too long for one, get the engine's Markdown.
     const inClient = !!Client && JSON.stringify(props).length <= CLIENT_MAX
+    // While picking, the docs on offer in two groups: Claude's from this session, then the folder's.
+    const pick: Choice[] | null = await read($, choices)
+    const groups = (['Written this session', 'In this folder'] as const)
+      .map(head => [head, (pick ?? []).filter(c => (c.note === 'Claude wrote this session') === (head === 'Written this session'))] as const)
+      .filter(([, rows]) => rows.length)
 
     return (
       <Box flexDirection="column" gap={0}>
@@ -430,10 +447,29 @@ export const register: Register = (on, options) => {
             />
           )}
           {list.length > 0 && <Button key="clear" label="Clear notes" plain dimColor onPress={() => update($, notes, () => [])} />}
+          {pick && d ? (
+            <Button key="back" label="Back" plain dimColor onPress={() => update($, choices, () => null)} />
+          ) : (
+            <Button key="pick" label="Open…" plain dimColor onPress={() => showChoices($)} />
+          )}
         </Box>
-        <Box marginTop={1} flexDirection="column">
-          {inClient ? <Client key="doc" module="./doc.tsx" props={props} width="100%" /> : <Markdown key="doc-md" text={d?.text ?? ''} />}
-        </Box>
+        {pick ? (
+          <Box marginTop={1} flexDirection="column" gap={1}>
+            {groups.map(([head, rows]) => (
+              <Box key={`g-${head}`} flexDirection="column">
+                <Text dimColor>{head}</Text>
+                {rows.map(c => (
+                  <Button key={`pick-${c.path}`} label={c.label} plain onPress={() => openDoc($, c.path)} />
+                ))}
+              </Box>
+            ))}
+            {!pick.length && <Text dimColor>No markdown or HTML pages here yet. /tangent path/to/file.md opens one anywhere.</Text>}
+          </Box>
+        ) : (
+          <Box marginTop={1} flexDirection="column">
+            {inClient ? <Client key="doc" module="./doc.tsx" props={props} width="100%" /> : <Markdown key="doc-md" text={d?.text ?? ''} />}
+          </Box>
+        )}
       </Box>
     )
   })

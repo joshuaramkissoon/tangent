@@ -171,12 +171,22 @@ test('typing /tangent offers the docs Claude wrote this session, then the folder
 
   const ask = (text: string) =>
     ($ as any).prompt.autocomplete({ text, cursor: text.length, token: text.split(' ').pop(), start: text.lastIndexOf(' ') + 1 })
-  const all = await ask('/tangent')
-  expect(all.suggestions.map((s: any) => s.text)).toEqual(['/tangent docs/plan.md', '/tangent plan.html', '/tangent README.md'])
-  expect(all.suggestions[0].description).toBe('Claude wrote this session')
+  // Not on the command word, where the rows would sit among every other command's.
+  expect((await ask('/tangent')).suggestions).toEqual([])
   const some = await ask('/tangent pl')
   expect(some.suggestions.map((s: any) => s.text)).toEqual(['docs/plan.md', 'plan.html'])
+  expect(some.suggestions[0]).toMatchObject({ label: 'plan.md', description: 'Claude wrote this session' })
   expect((await ask('fix the tests')).suggestions).toEqual([])
+
+  // /tangent alone offers them in the pane, Claude's first; picking one opens it.
+  await ($ as any).command.run({ command: 'tangent', args: '' })
+  const view = await $.ui.mount({ plugin: 'tangent', surface: 'terminal', component: 'Pane', requestId: 'tangent', props: pane as any })
+  const picks = (await view.findAll({ type: 'Button' })).filter((b: any) => String(b.key ?? b.props?.key).startsWith('pick-'))
+  expect(picks.map((b: any) => b.props.label)).toEqual(['docs/plan.md', 'plan.html', 'README.md'])
+  expect(await view.find({ type: 'Text', text: 'Written this session' } as any)).toBeDefined()
+  await view.press({ key: 'pick-/repo/docs/plan.md' })
+  expect(await view.find({ key: 'doc' })).toBeDefined()
+  expect(await view.find({ key: 'pick-/repo/plan.html' })).toBeUndefined()
 })
 
 test('a selection in the transcript gets its actions in the band', async ($, on) => {

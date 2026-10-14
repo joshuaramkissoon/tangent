@@ -21,6 +21,9 @@ export type Note = {
 
 export type Sel = { text: string; requestId?: string }
 
+// A doc to open: where it is, how it's shown, and where it came from.
+export type Choice = { path: string; label: string; note: string }
+
 // What the pane hands the doc's Client region (hooks/doc.tsx).
 export type DocProps = { text: string; notes: Note[]; changed: string[]; columns: number }
 
@@ -34,6 +37,8 @@ declare module 'claude-code' {
       written: string | null
       // Docs Claude wrote or edited this session, newest first: what /tangent offers first.
       made: string[]
+      // The docs the pane offers to open, while it's offering them.
+      choices: Choice[] | null
       // The band's field is open for a question or a comment.
       asking: false | 'ask' | 'comment'
     }
