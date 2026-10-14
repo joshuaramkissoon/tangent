@@ -31,4 +31,4 @@ Behind a flag, `/v1/search` first, a day of watching hit ratio and origin load, 
 
 ## The ask
 
-Write the plan to `PLAN.md`: under 40 lines, with sections for Approach (numbered steps with the exact headers), What changes (a small table of endpoint, TTL and purge trigger), Risks, and Rollout, ending with a one-line `curl` to check the headers.
+Write the plan as `PLAN.md` in this folder (a file next to this one, not an artifact): under 40 lines, with sections for Approach (numbered steps with the exact headers), What changes (a small table of endpoint, TTL and purge trigger), Risks, and Rollout, ending with a one-line `curl` to check the headers.
