@@ -1,0 +1,20 @@
+{
+  "name": "tangent",
+  "version": "0.2.0",
+  "description": "Read Claude's markdown docs in a side pane; select any text to explain it, ask about it, or go deeper, with notes in the margin",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "together_api_key": {
+      "type": "string",
+      "title": "Together API key",
+      "description": "Answers notes with DeepSeek on Together, which is faster than Haiku. Empty: Haiku answers.",
+      "default": ""
+    },
+    "together_model": {
+      "type": "string",
+      "title": "Together model",
+      "description": "The Together model notes are answered with when the key is set.",
+      "default": "deepseek-ai/DeepSeek-V4.1-Flash"
+    }
+  }
+}

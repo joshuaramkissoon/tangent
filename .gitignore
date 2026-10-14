@@ -7,3 +7,6 @@ __pycache__/
 .DS_Store
 
 marketing/
+
+# Claude Code lays its API types beside a loaded mod
+mod/.claude-plugin/types/
